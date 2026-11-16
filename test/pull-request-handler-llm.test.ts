@@ -80,12 +80,6 @@ function mockProvider(): LlmProvider {
 describe("handlePullRequestEvent — chemin LLM", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    resolveConfiguration.mockReset().mockResolvedValue(null);
-    vi.mocked(getExpertConfigurationService)
-      .mockReset()
-      .mockReturnValue({
-        resolve: resolveConfiguration,
-      } as unknown as ReturnType<typeof getExpertConfigurationService>);
     vi.stubEnv("GEMINI_REVIEW_API_KEY", "");
     vi.stubEnv("GEMINI_API_KEY", "");
     delete process.env.LABEL_MODE;
