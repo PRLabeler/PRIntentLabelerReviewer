@@ -1,14 +1,16 @@
-import { GeminiProvider } from "../llm/gemini-provider.js";
-import { ConfigurableBugReviewExpert } from "./configurable-bug-review-expert.js";
-import type { LlmUsageMetrics } from "../llm/openai-compatible-provider.js";
+import type { CodeReviewResult } from "../domain/code-review.js";
+import type { PullRequestLlmContext } from "../domain/pull-request-data.js";
+import type { BugReviewExpert } from "./bug-review-expert.js";
+import { GeminiReviewExpert } from "./gemini-review-expert.js";
 
-export class GeminiBugReviewExpert extends ConfigurableBugReviewExpert {
-  constructor(
-    apiKey: string,
-    model: string,
-    baseUrl = "https://generativelanguage.googleapis.com/v1beta",
-    onUsage?: (metrics: LlmUsageMetrics) => void,
-  ) {
-    super(new GeminiProvider(apiKey, model, baseUrl, onUsage));
+export class GeminiBugReviewExpert implements BugReviewExpert {
+  private readonly expert: GeminiReviewExpert;
+
+  constructor(apiKey: string, model: string, baseUrl?: string) {
+    this.expert = new GeminiReviewExpert(apiKey, model, baseUrl);
+  }
+
+  reviewBugFix(context: PullRequestLlmContext): Promise<CodeReviewResult> {
+    return this.expert.review(context, "bug");
   }
 }

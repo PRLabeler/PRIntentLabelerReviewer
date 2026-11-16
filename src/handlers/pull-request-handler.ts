@@ -26,18 +26,16 @@ import type { LlmUsageMetrics } from "../llm/openai-compatible-provider.js";
 import { getLlmConfigurationService } from "../configuration/runtime.js";
 import { CLASSIFICATION_PROMPT_VERSION } from "../llm/prompt-builder.js";
 import { describeLlmFailure } from "../llm/failure-message.js";
-import type { BugReviewResult } from "../domain/code-review.js";
-import type { BugReviewExpert } from "../review/bug-review-expert.js";
-import {
-  BugReviewConfigurationError,
-  resolveBugReviewExpert,
-} from "../review/runtime.js";
-import { publishBugReview } from "../github/review-publisher.js";
+import type { CodeReviewResult } from "../domain/code-review.js";
+import type { ReviewExpert } from "../review/review-expert.js";
+import { createEnvironmentReviewExpert } from "../review/runtime.js";
+import { selectPrimaryReviewIntent } from "../review/select-review-intent.js";
+import { publishIntentReview } from "../github/review-publisher.js";
 
 export async function handlePullRequestEvent(
   context: Context<"pull_request">,
   providerOverride?: LlmProvider | null,
-  bugReviewExpertOverride?: BugReviewExpert | null,
+  reviewExpertOverride?: ReviewExpert | null,
 ): Promise<void> {
   const { action, pull_request, repository } = context.payload;
 
@@ -198,8 +196,8 @@ export async function handlePullRequestEvent(
 
     const mode = resolveLabelMode(process.env.LABEL_MODE);
     let appliedLabels: string[] = [];
-    let bugReview: BugReviewResult | null = null;
-    let bugReviewFailure: string | null = null;
+    let intentReview: CodeReviewResult | null = null;
+    let intentReviewFailure: string | null = null;
 
     if (analysis && analysis.suggestions.length > 0) {
       const toApply = selectLabelsToApply(analysis.suggestions, mode);
@@ -251,54 +249,36 @@ export async function handlePullRequestEvent(
       }
     }
 
-    const isBugFix =
-      analysis?.suggestions.some(
-        (suggestion) => suggestion.name.trim().toLowerCase() === "bug",
-      ) ?? false;
-    if (isBugFix) {
-      try {
-        let bugReviewExpert = bugReviewExpertOverride;
-        if (bugReviewExpertOverride === undefined) {
-          const selection = await resolveBugReviewExpert(
-            context.payload.installation?.id,
-            (usage) =>
-              context.log.info(
-                {
-                  ...logContext,
-                  installationId: context.payload.installation?.id,
-                  intention: "bug",
-                  ...usage,
-                },
-                "Expert token usage measured",
-              ),
-          );
-          bugReviewExpert = selection?.expert ?? null;
-          if (selection) {
-            context.log.info(
-              { ...logContext, ...selection.metadata },
-              "Bug review configuration selected",
-            );
-          }
-        }
-        if (bugReviewExpert) {
-          bugReview = await bugReviewExpert.reviewBugFix(llmContext);
+    const reviewIntent = analysis
+      ? selectPrimaryReviewIntent(analysis.suggestions)
+      : null;
+    if (reviewIntent) {
+      const reviewExpert =
+        reviewExpertOverride === undefined
+          ? createEnvironmentReviewExpert()
+          : reviewExpertOverride;
+
+      if (reviewExpert) {
+        try {
+          intentReview = await reviewExpert.review(llmContext, reviewIntent);
           context.log.info(
             {
               ...logContext,
-              reviewVerdict: bugReview.verdict,
-              reviewFindings: bugReview.findings.length,
+              reviewIntent: intentReview.intent,
+              reviewVerdict: intentReview.verdict,
+              reviewFindings: intentReview.findings.length,
             },
-            "Bug fix routed to specialized review expert",
+            "Pull request routed to specialized Gemini review expert",
           );
-          if (bugReview.findings.length > 0) {
+          if (intentReview.findings.length > 0) {
             try {
-              await publishBugReview(context, prData, bugReview);
+              await publishIntentReview(context, prData, intentReview);
               context.log.info(
                 {
                   ...logContext,
-                  reviewFindings: bugReview.findings.length,
+                  reviewFindings: intentReview.findings.length,
                 },
-                "Inline bug review published",
+                "Inline intent review published",
               );
             } catch (publishError) {
               context.log.warn(
@@ -313,24 +293,22 @@ export async function handlePullRequestEvent(
               );
             }
           }
-        } else {
-          bugReviewFailure =
-            "Aucune configuration disponible pour l’expert Bug. Configure cet expert dans les paramètres de l’installation.";
+        } catch (reviewError) {
+          intentReviewFailure = describeLlmFailure(reviewError);
+          context.log.warn(
+            {
+              ...logContext,
+              error:
+                reviewError instanceof Error
+                  ? reviewError.message
+                  : reviewError,
+            },
+            "Specialized intent review failed",
+          );
         }
-      } catch (reviewError) {
-        bugReviewFailure =
-          reviewError instanceof BugReviewConfigurationError
-            ? reviewError.message
-            : describeLlmFailure(reviewError);
-        context.log.warn(
-          {
-            ...logContext,
-            installationId: context.payload.installation?.id,
-            intention: "bug",
-            error: bugReviewFailure,
-          },
-          "Specialized bug review failed",
-        );
+      } else {
+        intentReviewFailure =
+          "GEMINI_REVIEW_API_KEY ou GEMINI_API_KEY n'est pas configurée pour l'expert de revue.";
       }
     }
 
@@ -340,8 +318,8 @@ export async function handlePullRequestEvent(
       analysis,
       appliedLabels,
       llmFailureReason,
-      bugReview,
-      bugReviewFailure,
+      intentReview,
+      intentReviewFailure,
     );
     await upsertPullRequestComment(context, prData.number, commentBody);
 

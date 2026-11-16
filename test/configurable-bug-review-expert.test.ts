@@ -105,6 +105,7 @@ describe("expert bug configurable", () => {
       const context = reviewContext();
       const before = structuredClone(context);
       expect(await expert.reviewBugFix(context)).toEqual({
+        intent: "bug",
         verdict: "changes-requested",
         summary: "Une correction est nécessaire.",
         findings: [finding],
