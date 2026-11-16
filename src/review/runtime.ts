@@ -28,7 +28,10 @@ export type BugReviewExpertSelection = {
   };
 };
 
-function environmentGeminiCredentials(): { apiKey: string; model: string } | null {
+function environmentGeminiCredentials(): {
+  apiKey: string;
+  model: string;
+} | null {
   const apiKey = (
     process.env.GEMINI_REVIEW_API_KEY ?? process.env.GEMINI_API_KEY
   )?.trim();
