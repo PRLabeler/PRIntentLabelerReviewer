@@ -8,6 +8,7 @@ function createMockContext() {
   return {
     payload: {
       action: "opened",
+      installation: { id: 42 },
       pull_request: {
         number: 7,
         title: "Add JWT auth",
@@ -24,6 +25,8 @@ function createMockContext() {
     },
     octokit: {
       pulls: {
+        listReviewComments: vi.fn().mockResolvedValue({ data: [] }),
+        createReview: vi.fn().mockResolvedValue({}),
         listFiles: vi.fn().mockResolvedValue({
           data: [
             {
@@ -77,10 +80,20 @@ function mockProvider(): LlmProvider {
 describe("handlePullRequestEvent — chemin LLM", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resolveConfiguration.mockReset().mockResolvedValue(null);
+    vi.mocked(getExpertConfigurationService)
+      .mockReset()
+      .mockReturnValue({
+        resolve: resolveConfiguration,
+      } as unknown as ReturnType<typeof getExpertConfigurationService>);
+    vi.stubEnv("GEMINI_REVIEW_API_KEY", "");
+    vi.stubEnv("GEMINI_API_KEY", "");
     delete process.env.LABEL_MODE;
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
     delete process.env.LABEL_MODE;
   });
 
