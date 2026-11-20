@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readPullRequestData } from "../src/github/pr-reader.js";
+import { buildPullRequestLlmContext } from "../src/llm/pr-context.js";
+import { buildClassificationPrompt } from "../src/llm/prompt-builder.js";
+import { toAiLabelName } from "../src/labels/ai-label-name.js";
 
 function createMockContext(overrides: Record<string, unknown> = {}) {
   return {
@@ -17,6 +20,7 @@ function createMockContext(overrides: Record<string, unknown> = {}) {
         changed_files: 2,
       },
       repository: {
+        id: 123,
         owner: { login: "org" },
         name: "repo",
       },
@@ -47,9 +51,9 @@ function createMockContext(overrides: Record<string, unknown> = {}) {
       issues: {
         listLabelsForRepo: vi.fn().mockResolvedValue({
           data: [
-            { name: "bug", description: "Something is not working" },
-            { name: "feature", description: "New functionality" },
-            { name: "tests", description: null },
+            { id: 10, name: "bug", description: "Something is not working" },
+            { id: 11, name: "feature", description: "New functionality" },
+            { id: 12, name: "tests", description: null },
           ],
         }),
         listLabelsOnIssue: vi.fn().mockResolvedValue({
@@ -73,6 +77,7 @@ describe("readPullRequestData", () => {
 
     expect(result.owner).toBe("org");
     expect(result.repo).toBe("repo");
+    expect(result.repositoryId).toBe(123);
     expect(result.number).toBe(42);
     expect(result.title).toBe("Fix login bug");
     expect(result.author).toBe("mehdi");
@@ -104,6 +109,11 @@ describe("readPullRequestData", () => {
       bug: "Something is not working",
       feature: "New functionality",
     });
+    expect(result.repositoryLabelCatalog).toEqual([
+      { id: 10, name: "bug", description: "Something is not working" },
+      { id: 11, name: "feature", description: "New functionality" },
+      { id: 12, name: "tests", description: null },
+    ]);
   });
 
   it("extrait les labels actuellement présents sur la PR", async () => {
@@ -177,4 +187,62 @@ describe("readPullRequestData", () => {
       per_page: 100,
     });
   });
+
+  it("conserve la description brute pour le routage et le nettoyage historique pour le LLM", async () => {
+    const ctx = createMockContext();
+    ctx.octokit.issues.listLabelsForRepo.mockResolvedValue({
+      data: [
+        { id: 10, name: "bug", description: "  Corrige un défaut  " },
+        { id: 11, name: "feature", description: "   " },
+        { id: 12, name: "tests", description: null },
+        { id: 13, name: toAiLabelName("bug"), description: "Label du bot" },
+      ],
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await readPullRequestData(ctx as any);
+
+    expect(result.repositoryLabels).toEqual(["bug", "feature", "tests"]);
+    expect(result.repositoryLabelDescriptions).toEqual({
+      bug: "Corrige un défaut",
+    });
+    expect(result.repositoryLabelCatalog).toEqual([
+      { id: 10, name: "bug", description: "  Corrige un défaut  " },
+      { id: 11, name: "feature", description: "   " },
+      { id: 12, name: "tests", description: null },
+    ]);
+  });
+
+  it("ne transmet pas les nouvelles métadonnées de routage au classifieur", async () => {
+    const ctx = createMockContext();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await readPullRequestData(ctx as any);
+    const context = buildPullRequestLlmContext(result);
+    const historicalContext = buildPullRequestLlmContext({
+      ...result,
+      repositoryId: undefined,
+      repositoryLabelCatalog: undefined,
+    });
+
+    expect(context).toEqual(historicalContext);
+    expect(buildClassificationPrompt(context)).toBe(
+      buildClassificationPrompt(historicalContext),
+    );
+  });
+
+  it.each(["listFiles", "listLabelsForRepo", "listLabelsOnIssue"] as const)(
+    "propage une erreur de %s sans la remplacer par un catalogue vide",
+    async (method) => {
+      const ctx = createMockContext();
+      const error = Object.assign(new Error("GitHub inaccessible"), {
+        status: 403,
+      });
+      if (method === "listFiles") {
+        ctx.octokit.pulls.listFiles.mockRejectedValue(error);
+      } else {
+        ctx.octokit.issues[method].mockRejectedValue(error);
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await expect(readPullRequestData(ctx as any)).rejects.toBe(error);
+    },
+  );
 });

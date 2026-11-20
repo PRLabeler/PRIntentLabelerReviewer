@@ -1,3 +1,5 @@
+import type { GitHubRepositoryLabel } from "./github-repository.js";
+
 export type PullRequestFileData = {
   filename: string;
   status: string;
@@ -10,6 +12,11 @@ export type PullRequestFileData = {
 export type PullRequestData = {
   owner: string;
   repo: string;
+  // Les lecteurs GitHub renseignent ces métadonnées pour le futur routage.
+  // Elles restent optionnelles pour les producteurs historiques/synthétiques
+  // et ne font pas partie du contexte transmis au classifieur.
+  repositoryId?: number;
+  repositoryLabelCatalog?: GitHubRepositoryLabel[];
   number: number;
   title: string;
   body: string;

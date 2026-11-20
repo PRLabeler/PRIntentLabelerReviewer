@@ -11,6 +11,7 @@ import type {
 } from "../src/configuration/llm-configuration.js";
 import { LlmConfigurationService } from "../src/configuration/llm-configuration-service.js";
 import { ApiKeyCipher } from "../src/security/api-key-cipher.js";
+import { registeredIntents } from "../src/review/expert-policies.js";
 
 class MemoryRepository implements LlmConfigurationRepository {
   readonly rows = new Map<number, StoredLlmConfiguration>();
@@ -70,6 +71,50 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("ExpertConfigurationService", () => {
+  it("isole chaque intention, ses clés et ses installations sans cache de configuration", async () => {
+    const repositories = new Map<string, MemoryRepository>();
+    const { cipher } = setup();
+    const service = new ExpertConfigurationService((intention) => {
+      const repository = new MemoryRepository();
+      repositories.set(intention, repository);
+      return repository;
+    }, cipher);
+    for (const intention of registeredIntents()) {
+      await service.save({
+        ...input,
+        intention,
+        model: `${intention}-model`,
+        apiKey: `fake-${intention}-key`,
+      });
+    }
+    await service.save({
+      ...input,
+      intention: "feature",
+      installationId: 43,
+      model: "other-installation",
+    });
+    for (const intention of registeredIntents()) {
+      expect(await service.resolve(42, intention)).toMatchObject({
+        intention,
+        model: `${intention}-model`,
+        apiKey: `fake-${intention}-key`,
+      });
+      expect(
+        JSON.stringify(repositories.get(intention)?.rows.get(42)),
+      ).not.toContain(`fake-${intention}-key`);
+    }
+    repositories.get("feature")!.rows.get(42)!.model = "updated-feature-model";
+    expect((await service.resolve(42, "feature"))?.model).toBe(
+      "updated-feature-model",
+    );
+    await service.delete(42, "feature");
+    expect(await service.resolve(42, "feature")).toBeNull();
+    expect((await service.resolve(42, "bug"))?.model).toBe("bug-model");
+    expect((await service.resolve(43, "feature"))?.model).toBe(
+      "other-installation",
+    );
+  });
+
   it("délègue le nettoyage global, valide les identifiants et filtre les erreurs", async () => {
     const { repository, cipher } = setup();
     const cleanup = vi.fn().mockResolvedValue(2);
@@ -296,7 +341,7 @@ describe("ExpertConfigurationService", () => {
 
   it("refuse une intention inactive sur toutes les opérations", async () => {
     const { service, factory } = setup();
-    const intention = "refactor" as ExpertIntention;
+    const intention = "unknown-expert" as ExpertIntention;
     for (const operation of [
       () => service.getSummary(42, intention),
       () => service.resolve(42, intention),

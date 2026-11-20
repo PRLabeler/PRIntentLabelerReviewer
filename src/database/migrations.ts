@@ -1,10 +1,11 @@
 import { readFile } from "node:fs/promises";
 import type { Pool } from "pg";
 
-// Ces deux migrations sont additives et réexécutables (IF NOT EXISTS).
+// Ces migrations sont additives et réexécutables (IF NOT EXISTS).
 export const DATABASE_MIGRATIONS = [
   "001_llm_configuration.sql",
   "002_expert_llm_configuration.sql",
+  "003_repository_review_policies.sql",
 ] as const;
 
 export async function applyDatabaseMigrations(

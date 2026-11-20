@@ -1,7 +1,8 @@
 export type ExpertPolicy = {
   intent: string;
+  displayName?: string;
   roleTitle: string;
-  classifiedAs: string;
+  classifiedAs?: string;
   reviewPolicy: string;
 };
 
@@ -110,4 +111,15 @@ registerExpertPolicy({
   reviewPolicy: `- Verify that incompatibilities are real, explicit and reflected in public contracts.
 - Report silent removals, renamed APIs without migration notes, or incomplete call-site updates in the diff.
 - Do not treat an internal refactor as breaking unless a public contract changed.`,
+});
+
+registerExpertPolicy({
+  intent: "general",
+  displayName: "Général",
+  roleTitle: "general code review",
+  reviewPolicy: `- Review the visible diff for logic errors, unintended behaviour regressions, unhandled edge cases and demonstrable reliability defects.
+- Report concrete security defects only when supported by the changed code and its visible context.
+- Explain how the changed code can produce incorrect behaviour, using direct evidence from the diff.
+- Do not assume a bug-fix, feature or refactor intent merely because this expert was selected.
+- Do not report style-only suggestions, speculative issues or defects without evidence in the diff.`,
 });

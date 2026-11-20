@@ -43,42 +43,48 @@ afterEach(() => {
 });
 
 describe("publishIntentReview", () => {
-  it("publie une review Changes requested avec un commentaire inline", async () => {
-    const context = createContext();
+  it.each(["bug", "general"])(
+    "publie la revue %s avec un commentaire inline",
+    async (intent) => {
+      const context = createContext();
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await publishIntentReview(context as any, prData, review);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await publishIntentReview(context as any, prData, { ...review, intent });
 
-    expect(context.octokit.pulls.createReview).toHaveBeenCalledWith(
-      expect.objectContaining({
-        event: "REQUEST_CHANGES",
-        commit_id: "abc123",
-        body: expect.stringContaining("Revue spécialisée — bug"),
-        comments: [
-          expect.objectContaining({
-            path: "src/cart-total.ts",
-            line: 19,
-            side: "RIGHT",
-            body: expect.stringContaining("**Solution proposée :**"),
-          }),
-        ],
-      }),
-    );
-  });
+      expect(context.octokit.pulls.createReview).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event: "REQUEST_CHANGES",
+          commit_id: "abc123",
+          body: expect.stringContaining(`Revue spécialisée — ${intent}`),
+          comments: [
+            expect.objectContaining({
+              path: "src/cart-total.ts",
+              line: 19,
+              side: "RIGHT",
+              body: expect.stringContaining("**Solution proposée :**"),
+            }),
+          ],
+        }),
+      );
+    },
+  );
 
-  it("ne republie pas la même review pour le même SHA", async () => {
-    process.env.APP_ID = "42";
-    const context = createContext([
-      {
-        body: "<!-- llm-pr-intent-review intent=bug sha=abc123 -->\nDéjà publié",
-        user: { type: "Bot" },
-        performed_via_github_app: { id: 42 },
-      },
-    ]);
+  it.each(["bug", "general"])(
+    "ne republie pas la revue %s pour le même SHA",
+    async (intent) => {
+      process.env.APP_ID = "42";
+      const context = createContext([
+        {
+          body: `<!-- llm-pr-intent-review intent=${intent} sha=abc123 -->\nDéjà publié`,
+          user: { type: "Bot" },
+          performed_via_github_app: { id: 42 },
+        },
+      ]);
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await publishIntentReview(context as any, prData, review);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await publishIntentReview(context as any, prData, { ...review, intent });
 
-    expect(context.octokit.pulls.createReview).not.toHaveBeenCalled();
-  });
+      expect(context.octokit.pulls.createReview).not.toHaveBeenCalled();
+    },
+  );
 });

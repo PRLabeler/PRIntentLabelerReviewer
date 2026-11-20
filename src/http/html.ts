@@ -78,6 +78,40 @@ export function renderPage(title: string, body: string): string {
     code { background: #0d1117; padding: 2px 5px; border-radius: 4px; }
     ul.installations { list-style: none; padding: 0; }
     ul.installations li { margin: 10px 0; }
+    .repository-selector { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .repository-selector label { margin: 0; }
+    .repository-selector select { flex: 1; min-width: 180px; width: auto; }
+    .mapping-table { overflow-x: auto; margin-top: 18px; }
+    .mapping-table table { border-collapse: collapse; width: 100%; text-align: left; }
+    .mapping-table th, .mapping-table td { padding: 12px 8px; border-bottom: 1px solid #30363d; vertical-align: top; }
+    .mapping-table th:first-child { width: 48%; }
+    .mapping-table label { margin: 0; overflow-wrap: anywhere; }
+    .mapping-table select { min-width: 170px; }
+    .expert-configuration-links { margin-top: 18px; font-size: 0.9rem; }
+    .expert-configuration-links .actions { margin-top: 12px; }
+    .expert-configuration-links .button {
+      transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease, transform 80ms ease;
+    }
+    .expert-configuration-links .button:hover {
+      background: #17365a;
+      border-color: #2f81f7;
+      box-shadow: 0 0 0 2px rgba(47, 129, 247, 0.12);
+    }
+    .expert-configuration-links .button:focus-visible {
+      outline: 2px solid #58a6ff;
+      outline-offset: 3px;
+    }
+    .expert-configuration-links .button:active {
+      background: #102844;
+      border-color: #58a6ff;
+      box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.35);
+      transform: translateY(1px);
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .expert-configuration-links .button { transition: none; }
+      .expert-configuration-links .button:active { transform: none; }
+    }
+    summary { cursor: pointer; }
   </style>
 </head>
 <body>

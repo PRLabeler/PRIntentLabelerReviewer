@@ -1,4 +1,6 @@
-type ListPage<T> = { data: T[] };
+// Octokit normalise l'enveloppe des dépôts en tableau pendant paginate.
+// Le client minimal doit pouvoir lire cette même enveloppe sans paginate.
+type ListPage<T> = { data: T[] | { repositories: T[] } };
 type ListMethod<T, TParameters> = (
   parameters: TParameters,
 ) => Promise<ListPage<T>>;
@@ -22,5 +24,6 @@ export async function listAllPages<T, TParameters>(
   }
 
   const response = await method(parameters);
-  return response.data;
+  if (Array.isArray(response.data)) return response.data;
+  return response.data.repositories;
 }

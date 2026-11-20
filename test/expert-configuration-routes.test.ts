@@ -13,7 +13,11 @@ import type {
   SaveLlmConfiguration,
   StoredLlmConfiguration,
 } from "../src/configuration/llm-configuration.js";
-import { EXPERT_PROVIDER_NAMES } from "../src/configuration/expert-definitions.js";
+import {
+  EXPERT_DEFINITIONS,
+  EXPERT_PROVIDER_NAMES,
+} from "../src/configuration/expert-definitions.js";
+import { registeredIntents } from "../src/review/expert-policies.js";
 import { providerResponse } from "./fixtures/bug-review.js";
 
 vi.mock("../src/auth/runtime.js", () => ({ getGitHubOAuthService: vi.fn() }));
@@ -23,6 +27,19 @@ vi.mock("../src/configuration/expert-configuration-runtime.js", () => ({
 vi.mock("../src/configuration/runtime.js", () => ({
   getLlmConfigurationService: vi.fn(),
 }));
+// Enregistrer une catégorie supplémentaire avant le chargement des pages et
+// routes : aucun changement du registre de configuration ou de l'UI ne suit.
+vi.mock("../src/review/expert-policies.js", async (importOriginal) => {
+  const policies =
+    await importOriginal<typeof import("../src/review/expert-policies.js")>();
+  policies.registerExpertPolicy({
+    intent: "maintenance",
+    roleTitle: "maintenance Pull Requests",
+    classifiedAs: "a maintenance change",
+    reviewPolicy: "Verify the maintenance change.",
+  });
+  return policies;
+});
 
 const httpFetch = globalThis.fetch; // HTTP local uniquement ; les appels LLM sont simulés.
 const session = {
@@ -34,11 +51,12 @@ const session = {
 };
 let server: Server;
 let base: string;
-let rows: Map<number, StoredLlmConfiguration>;
+let rows: Map<string, StoredLlmConfiguration>;
 let service: ExpertConfigurationService;
 const llmFetch = vi.fn();
 
 beforeEach(async () => {
+  session.installationIds = [42];
   vi.mocked(getGitHubOAuthService)
     .mockReset()
     .mockReturnValue({
@@ -46,14 +64,15 @@ beforeEach(async () => {
     } as unknown as NonNullable<ReturnType<typeof getGitHubOAuthService>>);
   rows = new Map();
   service = new ExpertConfigurationService(
-    () => ({
-      findByInstallationId: async (id) => rows.get(id) ?? null,
+    (intention) => ({
+      findByInstallationId: async (id) =>
+        rows.get(`${id}:${intention}`) ?? null,
       upsert: async (input: SaveLlmConfiguration) => {
         const row = { ...input, createdAt: new Date(), updatedAt: new Date() };
-        rows.set(input.installationId, row);
+        rows.set(`${input.installationId}:${intention}`, row);
         return row;
       },
-      delete: async (id) => rows.delete(id),
+      delete: async (id) => rows.delete(`${id}:${intention}`),
     }),
     new ApiKeyCipher(Buffer.alloc(32, 4).toString("base64")),
   );
@@ -75,7 +94,10 @@ beforeEach(async () => {
   vi.stubGlobal("fetch", llmFetch);
   const app = express();
   const router = express.Router();
-  registerConfigurationRoutes(router);
+  registerConfigurationRoutes(router, {
+    listRepositories: vi.fn(async () => []),
+    readRepositoryLabels: vi.fn(),
+  });
   app.use(router);
   server = app.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -112,25 +134,51 @@ const path = "/settings/42/experts/bug";
 const testPath = "/api/installations/42/experts/bug/llm/test";
 
 describe("routes des experts avec vrai service et clients externes simulés", () => {
-  it("affiche le lien et conserve le formulaire du classifieur", async () => {
+  it("réserve les experts et le formulaire du classifieur aux paramètres d'une installation", async () => {
+    expect(registeredIntents()).toContain("maintenance");
+    const installations = await request("/settings");
+    expect(installations.status).toBe(200);
+    const installationsHtml = await installations.text();
+    expect(installationsHtml).toContain('href="/settings/42"');
+    expect(installationsHtml).not.toContain("Experts IA par intention");
+    expect(installationsHtml).not.toContain("/experts/");
+    expect(installationsHtml).not.toContain('id="llm-settings-form"');
     const response = await request("/settings/42");
     const html = await response.text();
     expect(response.status).toBe(200);
     expect(html).toContain(`href="${path}"`);
     expect(html).toContain('action="/settings/42/save"');
+    expect(html).toContain("Experts IA");
+    expect(html).toContain("Classifieur d’intention");
+    for (const intention of registeredIntents()) {
+      const link = `href="/settings/42/experts/${intention}"`;
+      expect(html).toContain(link);
+    }
+    expect(html).not.toContain("Seul l’expert Bug");
     expect(getExpertConfigurationService).not.toHaveBeenCalled();
   });
 
-  it.each(EXPERT_PROVIDER_NAMES)(
-    "teste, enregistre, relit, modifie et supprime %s",
-    async (provider) => {
+  it.each(
+    registeredIntents().flatMap((intention) =>
+      EXPERT_PROVIDER_NAMES.map((provider) => ({ intention, provider })),
+    ),
+  )(
+    "teste, enregistre, relit, modifie et supprime $intention avec $provider",
+    async ({ intention, provider }) => {
+      const path = `/settings/42/experts/${intention}`;
+      const testPath = `/api/installations/42/experts/${intention}/llm/test`;
+      const expertName = EXPERT_DEFINITIONS[intention].displayName;
       const test = await request(testPath, { ...form, provider });
       expect(test.status).toBe(200);
+      const testBody = (await test.json()) as { message: string };
+      expect(testBody.message).toContain(`expert ${expertName}`);
       expect(rows.size).toBe(0);
       const saved = await request(`${path}/save`, { ...form, provider });
       expect(saved.status).toBe(302);
       expect(saved.headers.get("location")).toBe(`${path}?saved=1`);
-      expect(JSON.stringify(rows.get(42))).not.toContain(form.apiKey);
+      expect(JSON.stringify(rows.get(`42:${intention}`))).not.toContain(
+        form.apiKey,
+      );
       const page = await request(`${path}?saved=1`);
       const html = await page.text();
       expect(page.headers.get("cache-control")).toBe("no-store");
@@ -139,6 +187,10 @@ describe("routes des experts avec vrai service et clients externes simulés", ()
       );
       expect(html).toContain("1234");
       expect(html).not.toContain(form.apiKey);
+      expect(html).toContain(
+        `Configuration de l’expert ${expertName} testée et enregistrée`,
+      );
+      expect(html).toContain("pour laquelle cet expert est sélectionné");
       expect(html).toContain("utilisée à la prochaine analyse");
       expect(html).not.toContain("activation à venir");
       const updated = await request(`${path}/save`, {
@@ -148,71 +200,212 @@ describe("routes des experts avec vrai service et clients externes simulés", ()
         apiKey: "",
       });
       expect(updated.status).toBe(302);
-      expect(await service.resolve(42, "bug")).toMatchObject({
+      expect(await service.resolve(42, intention)).toMatchObject({
         provider,
         model: "new-model",
         apiKey: form.apiKey,
       });
-      expect(
-        (await request(`${path}/delete`, { _csrf: form._csrf })).status,
-      ).toBe(302);
-      expect(await service.resolve(42, "bug")).toBeNull();
+      const deleted = await request(`${path}/delete`, { _csrf: form._csrf });
+      expect(deleted.status).toBe(302);
+      expect(deleted.headers.get("location")).toBe(`${path}?deleted=1`);
+      expect(await service.resolve(42, intention)).toBeNull();
+      const deletedPage = await request(`${path}?deleted=1`);
+      expect(await deletedPage.text()).toContain(
+        `configuration de l’expert ${expertName} a été supprimée`,
+      );
     },
   );
 
-  it("rejette une nouvelle clé sans remplacer l'ancienne ni la réafficher", async () => {
-    await request(`${path}/save`, form);
-    llmFetch.mockImplementation(async () =>
-      Response.json(
-        { error: { message: "fake-rejected-secret" } },
-        { status: 401 },
-      ),
+  it("isole les clés et les modifications entre catégories et installations via les routes", async () => {
+    session.installationIds = [42, 43];
+    const scopes = [
+      {
+        installationId: 42,
+        intention: "bug",
+        provider: "openai",
+        model: "bug-installation-42",
+        apiKey: "fake-key-bug-1111",
+      },
+      {
+        installationId: 42,
+        intention: "feature",
+        provider: "anthropic",
+        model: "feature-installation-42",
+        apiKey: "fake-key-feature-2222",
+      },
+      {
+        installationId: 43,
+        intention: "bug",
+        provider: "gemini",
+        model: "bug-installation-43",
+        apiKey: "fake-key-bug-3333",
+      },
+      {
+        installationId: 43,
+        intention: "feature",
+        provider: "openai",
+        model: "feature-installation-43",
+        apiKey: "fake-key-feature-4444",
+      },
+    ];
+    for (const scope of scopes) {
+      const path = `/settings/${scope.installationId}/experts/${scope.intention}`;
+      const response = await request(`${path}/save`, {
+        ...form,
+        provider: scope.provider,
+        model: scope.model,
+        apiKey: scope.apiKey,
+      });
+      expect(response.status).toBe(302);
+    }
+    expect(rows.size).toBe(4);
+
+    const test = await request(
+      "/api/installations/42/experts/feature/llm/test",
+      {
+        ...form,
+        provider: "anthropic",
+        model: "tested-without-saving",
+        apiKey: "",
+      },
     );
-    const response = await request(`${path}/save`, {
+    expect(test.status).toBe(200);
+    expect((await service.resolve(42, "feature"))?.model).toBe(
+      "feature-installation-42",
+    );
+
+    const updated = await request("/settings/42/experts/feature/save", {
       ...form,
-      apiKey: "fake-rejected-secret",
+      provider: "anthropic",
+      model: "updated-feature-model",
+      apiKey: "",
+      // Ces champs supplémentaires ne doivent jamais remplacer le scope URL.
+      installationId: "43",
+      intention: "bug",
     });
-    expect(response.status).toBe(400);
-    const html = await response.text();
-    expect(html).toContain("401");
-    expect(html).not.toContain("fake-rejected-secret");
-    expect(html).not.toContain(form.apiKey);
-    expect((await service.resolve(42, "bug"))?.apiKey).toBe(form.apiKey);
+    expect(updated.status).toBe(302);
+    for (const scope of scopes) {
+      const isUpdated =
+        scope.installationId === 42 && scope.intention === "feature";
+      const expectedModel = isUpdated ? "updated-feature-model" : scope.model;
+      expect(
+        await service.resolve(scope.installationId, scope.intention),
+      ).toMatchObject({
+        provider: scope.provider,
+        model: expectedModel,
+        apiKey: scope.apiKey,
+      });
+      const page = await request(
+        `/settings/${scope.installationId}/experts/${scope.intention}`,
+      );
+      const html = await page.text();
+      expect(html).toContain(`value="${expectedModel}"`);
+      expect(html).toContain(`value="${scope.provider}" selected`);
+      for (const otherScope of scopes) {
+        expect(html).not.toContain(otherScope.apiKey);
+        if (otherScope !== scope) expect(html).not.toContain(otherScope.model);
+      }
+    }
+    const deleted = await request("/settings/42/experts/feature/delete", {
+      _csrf: form._csrf,
+    });
+    expect(deleted.status).toBe(302);
+    expect(await service.resolve(42, "feature")).toBeNull();
+    for (const scope of [scopes[0], scopes[2], scopes[3]]) {
+      expect(
+        (await service.resolve(scope.installationId, scope.intention))?.model,
+      ).toBe(scope.model);
+    }
   });
 
-  it.each([`${path}/save`, `${path}/delete`, testPath])(
-    "protège %s contre les mutations sans CSRF",
-    async (url) => {
-      const response = await request(url, { ...form, _csrf: "invalid" });
-      expect(response.status).toBe(403);
-      expect(getExpertConfigurationService).not.toHaveBeenCalled();
-      expect(llmFetch).not.toHaveBeenCalled();
+  it.each(["bug", "security"])(
+    "rejette une nouvelle clé %s sans remplacer l'ancienne ni la réafficher",
+    async (intention) => {
+      const path = `/settings/42/experts/${intention}`;
+      await request(`${path}/save`, form);
+      llmFetch.mockImplementation(async () =>
+        Response.json(
+          { error: { message: "fake-rejected-secret" } },
+          { status: 401 },
+        ),
+      );
+      const response = await request(`${path}/save`, {
+        ...form,
+        apiKey: "fake-rejected-secret",
+      });
+      expect(response.status).toBe(400);
+      const html = await response.text();
+      expect(html).toContain("401");
+      expect(html).toContain(
+        `Expert ${EXPERT_DEFINITIONS[intention].displayName}`,
+      );
+      expect(html).not.toContain("fake-rejected-secret");
+      expect(html).not.toContain(form.apiKey);
+      expect((await service.resolve(42, intention))?.apiKey).toBe(form.apiKey);
     },
   );
 
-  it("redirige un GET non connecté et refuse un POST non connecté", async () => {
-    const response = await request(path, undefined, "");
-    expect(response.status).toBe(302);
-    expect(response.headers.get("location")).toBe(
-      "/auth/github?installation_id=42",
+  it.each(
+    ["bug", "feature", "security"].flatMap((intention) => [
+      `/settings/42/experts/${intention}/save`,
+      `/settings/42/experts/${intention}/delete`,
+      `/api/installations/42/experts/${intention}/llm/test`,
+    ]),
+  )("protège %s contre les mutations sans CSRF", async (url) => {
+    const response = await request(url, { ...form, _csrf: "invalid" });
+    expect(response.status).toBe(403);
+    expect(getExpertConfigurationService).not.toHaveBeenCalled();
+    expect(llmFetch).not.toHaveBeenCalled();
+  });
+
+  it.each(["bug", "feature", "security"])(
+    "protège l'accès OAuth à %s",
+    async (intention) => {
+      const path = `/settings/42/experts/${intention}`;
+      const testPath = `/api/installations/42/experts/${intention}/llm/test`;
+      const response = await request(path, undefined, "");
+      expect(response.status).toBe(302);
+      expect(response.headers.get("location")).toBe(
+        "/auth/github?installation_id=42",
+      );
+      expect((await request(testPath, form, "")).status).toBe(403);
+      expect((await request(`${path}/save`, form, "")).status).toBe(403);
+      expect(
+        (await request(`${path}/delete`, { _csrf: form._csrf }, "")).status,
+      ).toBe(403);
+      expect(getExpertConfigurationService).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    "/settings/43/experts/bug",
+    "/settings/43/experts/feature",
+    "/settings/invalid/experts/security",
+  ])("refuse l'accès à %s", async (url) => {
+    expect((await request(url)).status).toBe(403);
+    expect((await request(`${url}/save`, form)).status).toBe(403);
+    expect((await request(`${url}/delete`, { _csrf: form._csrf })).status).toBe(
+      403,
     );
-    expect((await request(testPath, form, "")).status).toBe(403);
     expect(getExpertConfigurationService).not.toHaveBeenCalled();
   });
 
-  it.each(["/settings/43/experts/bug", "/settings/invalid/experts/bug"])(
-    "refuse l'accès à %s",
-    async (url) => {
-      expect((await request(url)).status).toBe(403);
-      expect((await request(`${url}/save`, form)).status).toBe(403);
-      expect(getExpertConfigurationService).not.toHaveBeenCalled();
-    },
-  );
+  it("refuse un test de connexion pour une installation non autorisée", async () => {
+    const response = await request(
+      "/api/installations/43/experts/security/llm/test",
+      form,
+    );
+    expect(response.status).toBe(403);
+    expect(getExpertConfigurationService).not.toHaveBeenCalled();
+    expect(llmFetch).not.toHaveBeenCalled();
+  });
 
   it("refuse les intentions inactives et les fournisseurs hors V1", async () => {
-    expect((await request("/settings/42/experts/refactor")).status).toBe(404);
+    expect((await request("/settings/42/experts/unknown-expert")).status).toBe(
+      404,
+    );
     expect(
-      (await request("/settings/42/experts/refactor/save", form)).status,
+      (await request("/settings/42/experts/unknown-expert/save", form)).status,
     ).toBe(404);
     expect(
       (await request(testPath, { ...form, provider: "groq" })).status,
@@ -243,25 +436,42 @@ describe("routes des experts avec vrai service et clients externes simulés", ()
     });
     expect(response.status).toBe(400);
     expect(await response.text()).toContain("nouvelle clé API");
-    expect(rows.get(42)?.provider).toBe("openai");
+    expect(rows.get("42:bug")?.provider).toBe("openai");
   });
 
-  it("signale une indisponibilité du service sans exposer les erreurs internes", async () => {
-    vi.mocked(getExpertConfigurationService).mockImplementation(() => {
-      throw new ExpertConfigurationUnavailableError();
-    });
-    expect((await request(path)).status).toBe(503);
-    expect((await request(testPath, form)).status).toBe(503);
-    expect((await request(`${path}/save`, form)).status).toBe(503);
-    expect(
-      (await request(`${path}/delete`, { _csrf: form._csrf })).status,
-    ).toBe(503);
-  });
+  it.each(["bug", "feature"])(
+    "signale une indisponibilité du service pour %s sans détails internes",
+    async (intention) => {
+      const path = `/settings/42/experts/${intention}`;
+      const testPath = `/api/installations/42/experts/${intention}/llm/test`;
+      vi.mocked(getExpertConfigurationService).mockImplementation(() => {
+        throw new ExpertConfigurationUnavailableError();
+      });
+      const page = await request(path);
+      expect(page.status).toBe(503);
+      expect(await page.text()).toContain(
+        `expert ${EXPERT_DEFINITIONS[intention].displayName}`,
+      );
+      expect((await request(testPath, form)).status).toBe(503);
+      expect((await request(`${path}/save`, form)).status).toBe(503);
+      expect(
+        (await request(`${path}/delete`, { _csrf: form._csrf })).status,
+      ).toBe(503);
+    },
+  );
 
-  it("ne reflète pas un secret présent dans une exception inattendue", async () => {
-    vi.spyOn(service, "test").mockRejectedValue(new Error(form.apiKey));
-    const response = await request(testPath, form);
-    expect(response.status).toBe(400);
-    expect(await response.text()).not.toContain(form.apiKey);
-  });
+  it.each(["bug", "security"])(
+    "ne reflète pas un secret dans une exception inattendue pour %s",
+    async (intention) => {
+      const testPath = `/api/installations/42/experts/${intention}/llm/test`;
+      vi.spyOn(service, "test").mockRejectedValue(new Error(form.apiKey));
+      const response = await request(testPath, form);
+      expect(response.status).toBe(400);
+      const body = (await response.json()) as { message: string };
+      expect(body.message).toContain(
+        `Expert ${EXPERT_DEFINITIONS[intention].displayName}`,
+      );
+      expect(body.message).not.toContain(form.apiKey);
+    },
+  );
 });

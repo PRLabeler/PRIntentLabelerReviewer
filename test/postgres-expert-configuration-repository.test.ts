@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { PostgresExpertConfigurationRepository } from "../src/configuration/postgres-expert-configuration-repository.js";
 import type { ExpertIntention } from "../src/configuration/expert-definitions.js";
 import type { SaveLlmConfiguration } from "../src/configuration/llm-configuration.js";
+import { registeredIntents } from "../src/review/expert-policies.js";
 
 const input: SaveLlmConfiguration = {
   installationId: 42,
@@ -53,6 +54,27 @@ function setup() {
 }
 
 describe("PostgresExpertConfigurationRepository (client PostgreSQL simulé)", () => {
+  it.each(registeredIntents())(
+    "lie la lecture de %s au couple installation/intention",
+    async (intention) => {
+      const { pool } = setup();
+      pool.query.mockResolvedValueOnce(found());
+      const repository = new PostgresExpertConfigurationRepository(
+        pool as unknown as Pool,
+        intention,
+      );
+      expect((await repository.findByInstallationId(42))?.model).toBe(
+        "model-test",
+      );
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "WHERE installation_id = $1 AND intention = $2",
+        ),
+        [42, intention],
+      );
+    },
+  );
+
   it("supprime toutes les intentions de l'installation et les audite dans une seule instruction atomique", async () => {
     const { pool } = setup();
     pool.query.mockResolvedValueOnce({
@@ -298,7 +320,7 @@ describe("PostgresExpertConfigurationRepository (client PostgreSQL simulé)", ()
       () =>
         new PostgresExpertConfigurationRepository(
           pool as unknown as Pool,
-          "refactor" as ExpertIntention,
+          "unknown-expert" as ExpertIntention,
         ),
     ).toThrow("pas configurable");
     await expect(

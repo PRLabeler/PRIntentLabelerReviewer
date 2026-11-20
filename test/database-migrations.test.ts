@@ -16,7 +16,7 @@ function setup() {
 }
 
 describe("migrations (aucune connexion PostgreSQL réelle)", () => {
-  it("lit les deux migrations du dépôt et les exécute dans l'ordre avec une transaction chacune", async () => {
+  it("lit les migrations du dépôt et les exécute dans l'ordre avec une transaction chacune", async () => {
     const { pool, client } = setup();
     const sql = await Promise.all(
       DATABASE_MIGRATIONS.map((filename) =>
@@ -29,6 +29,7 @@ describe("migrations (aucune connexion PostgreSQL réelle)", () => {
     expect(await applyDatabaseMigrations(pool)).toEqual([
       "001_llm_configuration.sql",
       "002_expert_llm_configuration.sql",
+      "003_repository_review_policies.sql",
     ]);
     expect(client.query.mock.calls).toEqual([
       ["BEGIN"],
@@ -36,6 +37,9 @@ describe("migrations (aucune connexion PostgreSQL réelle)", () => {
       ["COMMIT"],
       ["BEGIN"],
       [sql[1]],
+      ["COMMIT"],
+      ["BEGIN"],
+      [sql[2]],
       ["COMMIT"],
     ]);
     expect(client.release).toHaveBeenCalledOnce();
@@ -91,5 +95,32 @@ describe("migrations (aucune connexion PostgreSQL réelle)", () => {
     // L'activation des intentions est dans le registre applicatif, pas dans
     // une contrainte SQL limitée à bug : les intentions futures réutilisent la table.
     expect(sql).not.toMatch(/intention\s+IN\s*\(/i);
+  });
+
+  it("ajoute des politiques isolées, des règles par identifiant et des audits conservés", async () => {
+    const sql = await readFile(
+      new URL(
+        "../db/migrations/003_repository_review_policies.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    expect(sql).toContain("PRIMARY KEY (installation_id, repository_id)");
+    expect(sql).toContain(
+      "PRIMARY KEY (installation_id, repository_id, label_id)",
+    );
+    expect(sql).toContain("default_behavior IN ('none', 'general')");
+    expect(sql).toContain("DEFAULT 'none'");
+    expect(sql).toContain(
+      "REFERENCES repository_review_policies (installation_id, repository_id)",
+    );
+    expect(sql).toContain("ON DELETE CASCADE");
+    expect(sql).toContain("previous_policy JSONB");
+    expect(sql).toContain("new_policy JSONB");
+    expect(sql).not.toMatch(/expert_id VARCHAR\(64\) NOT NULL/);
+    expect(sql).not.toMatch(
+      /REFERENCES (?:expert_llm_configurations|llm_configurations)/,
+    );
+    expect(sql).not.toMatch(/\b(?:ALTER|DROP|TRUNCATE)\b/);
   });
 });

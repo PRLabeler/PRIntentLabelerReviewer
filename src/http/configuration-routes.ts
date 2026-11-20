@@ -21,6 +21,11 @@ import {
   configurationInput,
 } from "./configuration-request.js";
 import { registerExpertConfigurationRoutes } from "./expert-configuration-routes.js";
+import {
+  registerRepositoryRoutingRoutes,
+  loadExpertsSettings,
+  type RoutingRepositoryReader,
+} from "./repository-routing-routes.js";
 
 function setSessionCookie(res: Response, value: string): void {
   const secure =
@@ -54,8 +59,12 @@ function securityHeaders(
   next();
 }
 
-export function registerConfigurationRoutes(router: Router): void {
+export function registerConfigurationRoutes(
+  router: Router,
+  repositoryReader?: RoutingRepositoryReader,
+): void {
   router.use(securityHeaders);
+  registerRepositoryRoutingRoutes(router, repositoryReader);
   router.use(express.urlencoded({ extended: false, limit: "16kb" }));
   registerExpertConfigurationRoutes(router);
 
@@ -189,6 +198,7 @@ export function registerConfigurationRoutes(router: Router): void {
       res.redirect(`/auth/github${target}`);
       return;
     }
+    res.setHeader("Cache-Control", "no-store");
     if (!installationId || !session.installationIds.includes(installationId)) {
       res
         .status(403)
@@ -215,11 +225,19 @@ export function registerConfigurationRoutes(router: Router): void {
     try {
       const configuration =
         await configurationService.getSummary(installationId);
-      res.send(
+      const experts = await loadExpertsSettings(
+        installationId,
+        req.query.repositoryId,
+        repositoryReader,
+      );
+      experts.saved =
+        req.query.routingSaved === "1" && !!experts.policy && !experts.error;
+      res.status(experts.status ?? 200).send(
         renderSettingsPage({
           installationId,
           session,
           configuration,
+          experts,
           notice:
             req.query.saved === "1"
               ? "La configuration a été testée et enregistrée."
@@ -321,6 +339,11 @@ export function registerConfigurationRoutes(router: Router): void {
           installationId,
           session,
           configuration,
+          experts: await loadExpertsSettings(
+            installationId,
+            undefined,
+            repositoryReader,
+          ),
           error:
             error instanceof Error
               ? error.message

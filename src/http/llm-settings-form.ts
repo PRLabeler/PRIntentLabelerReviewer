@@ -93,6 +93,12 @@ export function renderSettingsClientScript(): string {
   );
 
   return `"use strict";
+const repositorySelect = document.getElementById("repositoryId");
+if (repositorySelect) {
+  repositorySelect.addEventListener("change", () => {
+    repositorySelect.form?.requestSubmit();
+  });
+}
 const defaults = ${JSON.stringify(defaults)};
 const form = document.getElementById("llm-settings-form");
 if (form) {

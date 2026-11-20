@@ -95,7 +95,7 @@ function buildIntentReviewSection(
 ): string {
   const intentLabel = review?.intent ?? "intent";
   if (!review) {
-    return `### Revue spécialisée — ${intentLabel}\n\n> La revue Gemini n'a pas abouti : ${escapeModelText(failure ?? "erreur inconnue")}\n`;
+    return `### Revue spécialisée — ${intentLabel}\n\n> La revue de code n'a pas abouti : ${escapeModelText(failure ?? "erreur inconnue")}\n`;
   }
 
   if (review.findings.length === 0) {
