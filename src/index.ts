@@ -11,7 +11,12 @@ export default (app: Probot, options: ApplicationFunctionOptions) => {
   }
 
   app.on(
-    ["pull_request.opened", "pull_request.synchronize", "pull_request.edited"],
+    [
+      "pull_request.opened",
+      "pull_request.reopened",
+      "pull_request.synchronize",
+      "pull_request.edited",
+    ],
     async (context) => {
       await handlePullRequestEvent(context);
     },

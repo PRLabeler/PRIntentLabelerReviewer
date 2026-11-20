@@ -8,7 +8,7 @@ Montréal.
 
 ## Fonctionnement
 
-Lorsqu'une Pull Request est ouverte, modifiée ou synchronisée, l'application :
+Lorsqu'une Pull Request est ouverte, rouverte, modifiée ou synchronisée, l'application :
 
 1. récupère les fichiers modifiés et les labels disponibles;
 2. filtre et classe les fichiers selon leur pertinence;

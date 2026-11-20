@@ -16,7 +16,8 @@ default_events:
   - pull_request
   - check_run
   - issue_comment
-  - installation
+  # "installation" n'est pas un événement auquel on s'abonne : GitHub l'envoie
+  # automatiquement à toute GitHub App (le handler installation.deleted marche).
 
 # The set of permissions needed by the GitHub App. The format of the object uses
 # the permission name for the key (for example, issues) and the access type for
