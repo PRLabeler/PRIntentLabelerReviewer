@@ -1,4 +1,8 @@
 import type { LlmProviderName } from "../llm/provider-configuration.js";
+import {
+  getExpertPolicy,
+  registeredIntents,
+} from "../review/expert-policies.js";
 
 export const EXPERT_PROVIDER_NAMES = [
   "anthropic",
@@ -8,14 +12,19 @@ export const EXPERT_PROVIDER_NAMES = [
 
 export type ExpertProviderName = (typeof EXPERT_PROVIDER_NAMES)[number];
 
-// Ajouter une intention ici lorsqu'elle devient configurable. Le routage des
-// PR et la construction des experts restent indépendants de ce registre.
-export const EXPERT_DEFINITIONS = {
-  bug: {
-    displayName: "Bug",
-    providers: EXPERT_PROVIDER_NAMES,
-  },
-} as const;
+// Le registre des politiques est la source des catégories configurables.
+// Aucune liste d'intentions supplémentaire n'est à maintenir ici.
+export const EXPERT_DEFINITIONS = Object.fromEntries(
+  registeredIntents().map((intention) => [
+    intention,
+    {
+      displayName:
+        getExpertPolicy(intention)?.displayName ??
+        intention.charAt(0).toUpperCase() + intention.slice(1),
+      providers: EXPERT_PROVIDER_NAMES,
+    },
+  ]),
+);
 
 export type ExpertIntention = keyof typeof EXPERT_DEFINITIONS;
 

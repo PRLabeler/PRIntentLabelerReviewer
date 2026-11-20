@@ -5,6 +5,7 @@ import type {
 } from "../domain/pull-request-data.js";
 import { isAiLabelName } from "../labels/ai-label-name.js";
 import { listAllPages } from "./pagination.js";
+import { buildRepositoryLabelCatalog } from "./repository-labels.js";
 
 type OctokitLike = Context<"check_run">["octokit"];
 
@@ -51,6 +52,8 @@ export async function fetchPullRequestData(
   return {
     owner,
     repo,
+    repositoryId: pr.base.repo?.id,
+    repositoryLabelCatalog: buildRepositoryLabelCatalog(rawLabels),
     number: pullNumber,
     title: pr.title,
     body: pr.body ?? "",

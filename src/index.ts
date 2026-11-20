@@ -4,10 +4,14 @@ import { handleCheckRunRequestedAction } from "./handlers/check-run-handler.js";
 import { handleIssueCommentEdited } from "./handlers/comment-handler.js";
 import { registerConfigurationRoutes } from "./http/configuration-routes.js";
 import { handleInstallationDeleted } from "./handlers/installation-handler.js";
+import { InstallationRepositoryReader } from "./github/installation-repository-reader.js";
 
 export default (app: Probot, options: ApplicationFunctionOptions) => {
   if (options.getRouter) {
-    registerConfigurationRoutes(options.getRouter("/"));
+    const repositoryReader = new InstallationRepositoryReader(
+      (installationId) => app.auth(installationId),
+    );
+    registerConfigurationRoutes(options.getRouter("/"), repositoryReader);
   }
 
   app.on(

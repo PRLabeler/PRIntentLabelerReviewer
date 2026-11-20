@@ -5,6 +5,7 @@ import type {
 } from "../domain/pull-request-data.js";
 import { isAiLabelName } from "../labels/ai-label-name.js";
 import { listAllPages } from "./pagination.js";
+import { buildRepositoryLabelCatalog } from "./repository-labels.js";
 
 export async function readPullRequestData(
   context: Context<"pull_request">,
@@ -46,6 +47,8 @@ export async function readPullRequestData(
   return {
     owner,
     repo,
+    repositoryId: repository.id,
+    repositoryLabelCatalog: buildRepositoryLabelCatalog(rawLabels),
     number: pullNumber,
     title: pr.title,
     body: pr.body ?? "",

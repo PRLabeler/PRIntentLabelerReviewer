@@ -1,10 +1,15 @@
 import { runInNewContext } from "node:vm";
 import { describe, expect, it, vi } from "vitest";
 import { renderExpertSettingsPage } from "../src/http/expert-settings-page.js";
-import { renderSettingsPage } from "../src/http/settings-page.js";
+import {
+  renderInstallationsPage,
+  renderSettingsPage,
+} from "../src/http/settings-page.js";
 import { renderSettingsClientScript } from "../src/http/llm-settings-form.js";
 import { LLM_PROVIDER_DEFINITIONS } from "../src/llm/provider-configuration.js";
 import type { ExpertConfigurationSummary } from "../src/configuration/expert-configuration.js";
+import { registeredIntents } from "../src/review/expert-policies.js";
+import { EXPERT_DEFINITIONS } from "../src/configuration/expert-definitions.js";
 
 const session = {
   githubUserId: 7,
@@ -24,68 +29,117 @@ const configuration: ExpertConfigurationSummary = {
 };
 
 describe("pages de configuration", () => {
-  it("rend l'accès à Bug visible depuis les paramètres sans changer les routes du classifieur", () => {
+  it("rend l'accès à tous les experts visible sans changer les routes du classifieur", () => {
     const html = renderSettingsPage({
       installationId: 42,
       session,
       configuration: null,
     });
     expect(html).toContain('href="/settings/42/experts/bug"');
+    expect(html).toContain("Experts IA");
+    expect(html).toContain("Classifieur d’intention");
     expect(html).toContain('action="/settings/42/save"');
     expect(html).toContain('data-test-url="/api/installations/42/llm/test"');
     expect(html).toContain('value="groq"');
     expect(html).toContain('name="baseUrl"');
-    expect(html).not.toContain("/experts/refactor");
+    for (const intention of registeredIntents()) {
+      expect(html).toContain(`href="/settings/42/experts/${intention}"`);
+    }
+    expect(html).not.toContain("Seul l’expert Bug");
   });
 
-  it("affiche les trois fournisseurs, les actions dédiées et l'application aux prochaines PR", () => {
-    const html = renderExpertSettingsPage({
-      installationId: 42,
-      intention: "bug",
-      session,
-      configuration,
+  it("affiche uniquement les installations autorisées et leurs liens de paramètres dans /settings", () => {
+    const html = renderInstallationsPage({
+      ...session,
+      installationIds: [42, 43],
     });
-    for (const provider of ["anthropic", "openai", "gemini"])
-      expect(html).toContain(`value="${provider}"`);
-    for (const provider of ["groq", "custom", "xai", "perplexity"])
-      expect(html).not.toContain(`value="${provider}"`);
-    expect(html).not.toContain('name="baseUrl"');
-    expect(html).toContain('action="/settings/42/experts/bug/save"');
-    expect(html).toContain('action="/settings/42/experts/bug/delete"');
-    expect(html).toContain(
-      'data-test-url="/api/installations/42/experts/bug/llm/test"',
-    );
-    expect(html).toContain("utilisée à la prochaine analyse");
-    expect(html).toContain("Après suppression");
-    expect(html).not.toContain("activation à venir");
-    expect(html).toContain("&lt;user&gt;");
-    expect(html).toContain("&lt;model &quot;test&quot;&gt;");
-    expect(html).toContain("terminant par <code>1234</code>");
-    expect(html).toMatch(/name="apiKey"[^>]*type="password"[^>]*>/);
-    expect(html.match(/<input[^>]*name="apiKey"[^>]*>/)?.[0]).not.toContain(
-      "value=",
-    );
-    expect(html).toContain('name="_csrf" value="csrf-token"');
+    for (const installationId of [42, 43]) {
+      expect(html).toContain(`href="/settings/${installationId}"`);
+    }
+    expect(html).not.toContain("Experts IA par intention");
+    expect(html).not.toContain("/experts/");
+    expect(html).not.toContain('id="llm-settings-form"');
+    expect(html).not.toContain("/settings/44");
+    const emptyHtml = renderInstallationsPage({
+      ...session,
+      installationIds: [],
+    });
+    expect(emptyHtml).toContain("Aucune installation accessible");
+    expect(emptyHtml).not.toContain("/experts/");
   });
 
-  it("permet de créer une configuration et échappe les messages d'erreur", () => {
-    const html = renderExpertSettingsPage({
-      installationId: 42,
-      intention: "bug",
-      session,
-      configuration: null,
-      error: "<script>alert(1)</script>",
-    });
-    expect(html).not.toContain("/bug/delete");
-    expect(html).toContain("Aucune configuration enregistrée");
-    expect(html.match(/<input[^>]*name="apiKey"[^>]*>/)?.[0]).toContain(
-      "required",
-    );
-    expect(html).toContain("&lt;script&gt;");
-  });
+  it.each(registeredIntents())(
+    "affiche le formulaire et les messages de l'expert %s",
+    (intention) => {
+      const expertName = EXPERT_DEFINITIONS[intention].displayName;
+      const html = renderExpertSettingsPage({
+        installationId: 42,
+        intention,
+        session,
+        configuration: { ...configuration, intention },
+      });
+      for (const provider of ["anthropic", "openai", "gemini"])
+        expect(html).toContain(`value="${provider}"`);
+      for (const provider of ["groq", "custom", "xai", "perplexity"])
+        expect(html).not.toContain(`value="${provider}"`);
+      expect(html).not.toContain('name="baseUrl"');
+      expect(html).toContain(`action="/settings/42/experts/${intention}/save"`);
+      expect(html).toContain(
+        `action="/settings/42/experts/${intention}/delete"`,
+      );
+      expect(html).toContain(
+        `data-test-url="/api/installations/42/experts/${intention}/llm/test"`,
+      );
+      expect(html).toContain("utilisée à la prochaine analyse");
+      expect(html).toContain("Après suppression");
+      expect(html).toContain(
+        `<title>Expert ${expertName} — PRIntentLabeler</title>`,
+      );
+      expect(html).toContain(`Configuration de l’expert ${expertName}`);
+      expect(html).toContain("pour laquelle cet expert est sélectionné");
+      expect(html).toContain(
+        `uniquement l’expert ${expertName} de cette installation`,
+      );
+      expect(html).toContain(
+        "Les configurations des autres experts et installations seront conservées",
+      );
+      if (intention !== "bug") expect(html).not.toContain("Bug");
+      expect(html).not.toContain("activation à venir");
+      expect(html).toContain("&lt;user&gt;");
+      expect(html).toContain("&lt;model &quot;test&quot;&gt;");
+      expect(html).toContain("terminant par <code>1234</code>");
+      expect(html).toMatch(/name="apiKey"[^>]*type="password"[^>]*>/);
+      expect(html.match(/<input[^>]*name="apiKey"[^>]*>/)?.[0]).not.toContain(
+        "value=",
+      );
+      expect(html).toContain('name="_csrf" value="csrf-token"');
+    },
+  );
+
+  it.each(registeredIntents())(
+    "permet de créer une configuration %s et échappe les erreurs",
+    (intention) => {
+      const html = renderExpertSettingsPage({
+        installationId: 42,
+        intention,
+        session,
+        configuration: null,
+        error: "<script>alert(1)</script>",
+      });
+      expect(html).not.toContain(`/experts/${intention}/delete`);
+      expect(html).toContain("Aucune configuration enregistrée");
+      expect(html).toContain(
+        `pour l’expert ${EXPERT_DEFINITIONS[intention].displayName} de cette installation`,
+      );
+      expect(html.match(/<input[^>]*name="apiKey"[^>]*>/)?.[0]).toContain(
+        "required",
+      );
+      expect(html).toContain("&lt;script&gt;");
+    },
+  );
 });
 
-function clientFixture() {
+function clientFixture(intention = "bug") {
   const listeners: Record<string, () => void | Promise<void>> = {};
   const provider = {
     value: "gemini",
@@ -97,7 +151,7 @@ function clientFixture() {
   const form = {
     dataset: {
       storedProvider: "gemini",
-      testUrl: "/api/installations/42/experts/bug/llm/test",
+      testUrl: `/api/installations/42/experts/${intention}/llm/test`,
     },
     reportValidity: vi.fn(() => true),
   };
@@ -172,20 +226,23 @@ describe("script partagé de configuration", () => {
     expect(ui.key.required).toBe(false);
   });
 
-  it("envoie le test à l'URL dédiée sans enregistrer et réactive le bouton", async () => {
-    const ui = clientFixture();
-    await ui.listeners.test();
-    expect(ui.fetch).toHaveBeenCalledWith(
-      ui.form.dataset.testUrl,
-      expect.objectContaining({ method: "POST" }),
-    );
-    const init = (
-      ui.fetch.mock.calls[0] as unknown as [string, RequestInit]
-    )[1];
-    expect(String(init.body)).toContain("_csrf=csrf-token");
-    expect(ui.result.textContent).toBe("Connexion réussie");
-    expect(ui.button.disabled).toBe(false);
-  });
+  it.each(["bug", "feature", "security"])(
+    "envoie le test de %s à l'URL dédiée sans enregistrer",
+    async (intention) => {
+      const ui = clientFixture(intention);
+      await ui.listeners.test();
+      expect(ui.fetch).toHaveBeenCalledWith(
+        ui.form.dataset.testUrl,
+        expect.objectContaining({ method: "POST" }),
+      );
+      const init = (
+        ui.fetch.mock.calls[0] as unknown as [string, RequestInit]
+      )[1];
+      expect(String(init.body)).toContain("_csrf=csrf-token");
+      expect(ui.result.textContent).toBe("Connexion réussie");
+      expect(ui.button.disabled).toBe(false);
+    },
+  );
 
   it("n'envoie pas un formulaire invalide et affiche les erreurs réseau sans HTML", async () => {
     const ui = clientFixture();

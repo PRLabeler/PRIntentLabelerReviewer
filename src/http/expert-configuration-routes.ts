@@ -8,6 +8,7 @@ import {
 } from "../configuration/expert-configuration.js";
 import {
   assertExpertProvider,
+  EXPERT_DEFINITIONS,
   isExpertIntention,
   type ExpertIntention,
 } from "../configuration/expert-definitions.js";
@@ -119,14 +120,15 @@ const PUBLIC_MESSAGES = new Set([
   "Une nouvelle clé API est requise lors du changement de fournisseur.",
 ]);
 
-function publicMessage(error: unknown): string {
+function publicMessage(error: unknown, intention: ExpertIntention): string {
+  const expertName = EXPERT_DEFINITIONS[intention].displayName;
+  let message = "L’opération a échoué. Vérifiez la configuration et réessayez.";
   if (error instanceof LlmProviderRequestError) {
-    return `Le fournisseur a refusé la connexion (${error.status}).`;
+    message = `Le fournisseur a refusé la connexion (${error.status}).`;
+  } else if (error instanceof Error && PUBLIC_MESSAGES.has(error.message)) {
+    message = error.message;
   }
-  if (error instanceof Error && PUBLIC_MESSAGES.has(error.message)) {
-    return error.message;
-  }
-  return "L’opération a échoué. Vérifiez la configuration et réessayez.";
+  return `Expert ${expertName} : ${message}`;
 }
 
 export function registerExpertConfigurationRoutes(router: Router): void {
@@ -134,6 +136,7 @@ export function registerExpertConfigurationRoutes(router: Router): void {
   router.get(path, async (req, res) => {
     const scope = await authorize(req, res);
     if (!scope) return;
+    const expertName = EXPERT_DEFINITIONS[scope.intention].displayName;
     try {
       const configuration = await getExpertConfigurationService().getSummary(
         scope.installationId,
@@ -141,10 +144,9 @@ export function registerExpertConfigurationRoutes(router: Router): void {
       );
       let notice: string | undefined;
       if (req.query.saved === "1") {
-        notice =
-          "Configuration testée et enregistrée. Elle sera utilisée à la prochaine analyse d’une PR classée Bug.";
+        notice = `Configuration de l’expert ${expertName} testée et enregistrée. Elle sera utilisée à la prochaine analyse d’une PR pour laquelle cet expert est sélectionné.`;
       } else if (req.query.deleted === "1") {
-        notice = "La configuration de cet expert a été supprimée.";
+        notice = `La configuration de l’expert ${expertName} a été supprimée pour cette installation.`;
       }
       res.send(
         renderExpertSettingsPage({
@@ -157,7 +159,7 @@ export function registerExpertConfigurationRoutes(router: Router): void {
       sendErrorResponse(
         res,
         503,
-        "La configuration des experts est indisponible. Vérifiez la connexion à la base et les migrations.",
+        `La configuration de l’expert ${expertName} est indisponible. Réessayez plus tard.`,
         false,
       );
     }
@@ -168,19 +170,19 @@ export function registerExpertConfigurationRoutes(router: Router): void {
     async (req, res) => {
       const scope = await authorize(req, res, true);
       if (!scope) return;
+      const expertName = EXPERT_DEFINITIONS[scope.intention].displayName;
       try {
         await getExpertConfigurationService().test(
           expertInput(scope, req.body ?? {}),
         );
         res.json({
-          message:
-            "Connexion au fournisseur réussie. Aucune configuration enregistrée par ce test.",
+          message: `Connexion au fournisseur de l’expert ${expertName} réussie. Aucune configuration enregistrée par ce test.`,
         });
       } catch (error) {
         sendErrorResponse(
           res,
           error instanceof ExpertConfigurationUnavailableError ? 503 : 400,
-          publicMessage(error),
+          publicMessage(error, scope.intention),
           true,
         );
       }
@@ -190,6 +192,7 @@ export function registerExpertConfigurationRoutes(router: Router): void {
   router.post(`${path}/save`, async (req, res) => {
     const scope = await authorize(req, res);
     if (!scope) return;
+    const expertName = EXPERT_DEFINITIONS[scope.intention].displayName;
     try {
       await getExpertConfigurationService().save({
         ...expertInput(scope, req.body ?? {}),
@@ -203,7 +206,7 @@ export function registerExpertConfigurationRoutes(router: Router): void {
         sendErrorResponse(
           res,
           503,
-          "Le service de configuration des experts est indisponible.",
+          `Le service de configuration de l’expert ${expertName} est indisponible.`,
           false,
         );
         return;
@@ -217,14 +220,14 @@ export function registerExpertConfigurationRoutes(router: Router): void {
           renderExpertSettingsPage({
             ...scope,
             configuration,
-            error: publicMessage(error),
+            error: publicMessage(error, scope.intention),
           }),
         );
       } catch {
         sendErrorResponse(
           res,
           503,
-          "Impossible de charger la configuration de cet expert.",
+          `Impossible de charger la configuration de l’expert ${expertName}.`,
           false,
         );
       }
@@ -234,6 +237,7 @@ export function registerExpertConfigurationRoutes(router: Router): void {
   router.post(`${path}/delete`, async (req, res) => {
     const scope = await authorize(req, res);
     if (!scope) return;
+    const expertName = EXPERT_DEFINITIONS[scope.intention].displayName;
     try {
       await getExpertConfigurationService().delete(
         scope.installationId,
@@ -247,7 +251,7 @@ export function registerExpertConfigurationRoutes(router: Router): void {
       sendErrorResponse(
         res,
         503,
-        "Impossible de supprimer la configuration de cet expert.",
+        `Impossible de supprimer la configuration de l’expert ${expertName}.`,
         false,
       );
     }

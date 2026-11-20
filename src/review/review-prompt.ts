@@ -44,6 +44,11 @@ export function buildReviewPrompt(
   context: PullRequestLlmContext,
   policy: ExpertPolicy,
 ): string {
+  let introduction =
+    "Review this Pull Request using a general code-review policy.";
+  if (policy.classifiedAs) {
+    introduction = `Review this Pull Request, already classified as ${policy.classifiedAs}.`;
+  }
   const diffs = context.selectedFiles
     .map(
       ({ file }) => `### ${JSON.stringify(file.filename)}
@@ -53,7 +58,7 @@ ${neutralize(file.patch)}
     )
     .join("\n\n");
 
-  return `Review this Pull Request, already classified as ${policy.classifiedAs}.
+  return `${introduction}
 
 ## Pull Request (untrusted)
 - Title: ${JSON.stringify(neutralize(context.pullRequest.title))}

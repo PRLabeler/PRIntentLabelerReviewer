@@ -3,7 +3,10 @@ import type { LlmConfigurationSummary } from "../configuration/llm-configuration
 import { LLM_PROVIDER_DEFINITIONS } from "../llm/provider-configuration.js";
 import { renderLlmSettingsForm } from "./llm-settings-form.js";
 export { renderSettingsClientScript } from "./llm-settings-form.js";
-import { renderExpertLinks } from "./expert-settings-page.js";
+import {
+  renderExpertsSettings,
+  type ExpertsSettingsState,
+} from "./repository-routing-page.js";
 import { escapeHtml, renderPage } from "./html.js";
 
 type SettingsPageOptions = {
@@ -12,6 +15,7 @@ type SettingsPageOptions = {
   configuration: LlmConfigurationSummary | null;
   notice?: string;
   error?: string;
+  experts?: ExpertsSettingsState;
 };
 
 export function renderSettingsPage(options: SettingsPageOptions): string {
@@ -25,24 +29,19 @@ export function renderSettingsPage(options: SettingsPageOptions): string {
       : "";
 
   const configured = options.configuration
-    ? `<section class="card">
-        <h2>Configuration actuelle</h2>
-        <p>
+    ? `<p class="muted">
           ${escapeHtml(selectedDefinition.displayName)} —
           <code>${escapeHtml(options.configuration.model)}</code> —
           clé terminant par <code>${escapeHtml(options.configuration.keyLastFour)}</code>
-        </p>
-        <p class="muted">
-          Dernière modification :
+          — Dernière modification :
           ${escapeHtml(options.configuration.updatedAt.toLocaleString("fr-CA"))}
         </p>
-      </section>`
+      `
     : "";
 
   return renderPage(
     "Configuration LLM",
-    `${renderExpertLinks(options.installationId)}
-    <section class="card">
+    `<section class="card" id="classifier">
       <h1>Configuration de PRIntentLabeler</h1>
       <p>
         Installation GitHub <code>#${options.installationId}</code> —
@@ -63,22 +62,22 @@ export function renderSettingsPage(options: SettingsPageOptions): string {
         backUrl: "/settings",
         backLabel: "Changer d’installation",
       })}
-    </section>
-
     ${configured}
 
     ${
       options.configuration
-        ? `<section class="card">
-            <h2>Supprimer la configuration</h2>
+        ? `<details>
+            <summary>Supprimer la configuration du classifieur</summary>
             <p>L’analyse LLM utilisera ensuite la configuration Groq du serveur, si elle existe.</p>
             <form method="post" action="/settings/${options.installationId}/delete">
               <input type="hidden" name="_csrf" value="${escapeHtml(options.session.csrfToken)}">
               <button class="danger" type="submit">Supprimer la clé et la configuration</button>
             </form>
-          </section>`
+          </details>`
         : ""
     }
+    </section>
+    ${renderExpertsSettings(options.installationId, options.session, options.experts)}
 
     <script src="/assets/settings.js" defer></script>`,
   );
@@ -93,7 +92,8 @@ export function renderInstallationsPage(
       ? `<ul class="installations">${session.installationIds
           .map(
             (id) =>
-              `<li><a class="button secondary" href="/settings/${id}">Installation GitHub #${id}</a></li>`,
+              `<li><h2>Installation GitHub #${id}</h2>
+              <a class="button secondary" href="/settings/${id}">Paramètres de l’installation et du classifieur</a></li>`,
           )
           .join("")}</ul>`
       : `<div class="notice error">Aucune installation accessible n’a été trouvée pour ce compte.</div>`;

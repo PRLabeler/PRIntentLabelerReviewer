@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { handleInstallationDeleted } from "../src/handlers/installation-handler.js";
 import { getLlmConfigurationService } from "../src/configuration/runtime.js";
 import { getExpertConfigurationService } from "../src/configuration/expert-configuration-runtime.js";
+import { getRepositoryRoutingService } from "../src/configuration/repository-routing-runtime.js";
 import app from "../src/index.js";
 
 vi.mock("../src/configuration/runtime.js", () => ({
@@ -10,17 +11,27 @@ vi.mock("../src/configuration/runtime.js", () => ({
 vi.mock("../src/configuration/expert-configuration-runtime.js", () => ({
   getExpertConfigurationService: vi.fn(),
 }));
+vi.mock("../src/configuration/repository-routing-runtime.js", () => ({
+  getRepositoryRoutingService: vi.fn(),
+}));
 const deleteClassifier = vi.fn();
 const deleteExperts = vi.fn();
+const deleteRouting = vi.fn();
 function context() {
   return {
-    payload: { installation: { id: 42 } },
+    payload: { installation: { id: 42 }, sender: { id: 7 } },
     log: { info: vi.fn(), error: vi.fn() },
   };
 }
 beforeEach(() => {
   deleteClassifier.mockReset().mockResolvedValue(true);
   deleteExperts.mockReset().mockResolvedValue(3);
+  deleteRouting.mockReset().mockResolvedValue(2);
+  vi.mocked(getRepositoryRoutingService)
+    .mockReset()
+    .mockReturnValue({
+      deleteForInstallation: deleteRouting,
+    } as unknown as ReturnType<typeof getRepositoryRoutingService>);
   vi.mocked(getLlmConfigurationService)
     .mockReset()
     .mockReturnValue({ delete: deleteClassifier } as unknown as NonNullable<
@@ -47,6 +58,7 @@ describe("désinstallation", () => {
     await callback(context());
     expect(deleteClassifier).toHaveBeenCalledWith(42);
     expect(deleteExperts).toHaveBeenCalledWith(42);
+    expect(deleteRouting).toHaveBeenCalledWith(42, 7);
   });
 
   it.each(["absent", "initialisation", "suppression"])(
@@ -64,6 +76,7 @@ describe("désinstallation", () => {
         ctx as unknown as Parameters<typeof handleInstallationDeleted>[0],
       );
       expect(deleteExperts).toHaveBeenCalledWith(42);
+      expect(deleteRouting).toHaveBeenCalledWith(42, 7);
       expect(ctx.log.info).toHaveBeenCalledWith(
         { installationId: 42, deletedCount: 3 },
         "Deleted expert configurations for uninstalled app",
@@ -83,9 +96,27 @@ describe("désinstallation", () => {
       ),
     ).resolves.toBeUndefined();
     expect(deleteClassifier).toHaveBeenCalledWith(42);
+    expect(deleteRouting).toHaveBeenCalledWith(42, 7);
     expect(ctx.log.error).toHaveBeenCalledWith(
       { installationId: 42 },
       "Failed to delete expert configurations after uninstall",
+    );
+    expect(JSON.stringify(ctx.log.error.mock.calls)).not.toContain(
+      "fake-sensitive",
+    );
+  });
+
+  it("isole une panne du nettoyage du routage sans exposer les détails SQL", async () => {
+    deleteRouting.mockRejectedValue(new Error("fake-sensitive-sql-detail"));
+    const ctx = context();
+    await handleInstallationDeleted(
+      ctx as unknown as Parameters<typeof handleInstallationDeleted>[0],
+    );
+    expect(deleteClassifier).toHaveBeenCalledWith(42);
+    expect(deleteExperts).toHaveBeenCalledWith(42);
+    expect(ctx.log.error).toHaveBeenCalledWith(
+      { installationId: 42 },
+      "Failed to delete repository routing policies after uninstall",
     );
     expect(JSON.stringify(ctx.log.error.mock.calls)).not.toContain(
       "fake-sensitive",

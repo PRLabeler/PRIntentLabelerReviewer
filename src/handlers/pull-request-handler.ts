@@ -28,8 +28,18 @@ import { CLASSIFICATION_PROMPT_VERSION } from "../llm/prompt-builder.js";
 import { describeLlmFailure } from "../llm/failure-message.js";
 import type { CodeReviewResult } from "../domain/code-review.js";
 import type { ReviewExpert } from "../review/review-expert.js";
-import { createEnvironmentReviewExpert } from "../review/runtime.js";
-import { selectPrimaryReviewIntent } from "../review/select-review-intent.js";
+import type { ExpertRoutingPlan } from "../domain/expert-routing.js";
+import { getRepositoryRoutingService } from "../configuration/repository-routing-runtime.js";
+import { RepositoryRoutingUnavailableError } from "../configuration/repository-routing.js";
+import {
+  resolveReviewExpert,
+  ReviewConfigurationError,
+} from "../review/runtime.js";
+import {
+  buildExpertRoutingPlan,
+  InvalidExpertRoutingPolicyError,
+} from "../review/expert-routing.js";
+import { registeredIntents } from "../review/expert-policies.js";
 import { publishIntentReview } from "../github/review-publisher.js";
 
 export async function handlePullRequestEvent(
@@ -249,33 +259,112 @@ export async function handlePullRequestEvent(
       }
     }
 
-    const reviewIntent = analysis
-      ? selectPrimaryReviewIntent(analysis.suggestions)
-      : null;
-    if (reviewIntent) {
-      const reviewExpert =
-        reviewExpertOverride === undefined
-          ? createEnvironmentReviewExpert()
-          : reviewExpertOverride;
+    const installationId = context.payload.installation?.id;
+    const repositoryId = prData.repositoryId;
+    let routingPlan: ExpertRoutingPlan | null = null;
+    if (analysis && analysis.suggestions.length > 0) {
+      try {
+        if (
+          installationId === undefined ||
+          repositoryId === undefined ||
+          prData.repositoryLabelCatalog === undefined
+        ) {
+          throw new InvalidExpertRoutingPolicyError();
+        }
 
-      if (reviewExpert) {
-        try {
+        const scope = { installationId, repositoryId };
+        // Seule une lecture réussie retournant null autorise le mode historique.
+        // Une politique vide reste prioritaire et une panne suspend la revue.
+        const policy = await getRepositoryRoutingService().getPolicy(scope);
+        routingPlan = buildExpertRoutingPlan({
+          scope,
+          policy,
+          repositoryLabels: prData.repositoryLabelCatalog,
+          suggestions: analysis.suggestions,
+          availableExpertIds: registeredIntents(),
+        });
+      } catch (routingError) {
+        intentReviewFailure =
+          routingError instanceof RepositoryRoutingUnavailableError ||
+          routingError instanceof InvalidExpertRoutingPolicyError
+            ? routingError.message
+            : new RepositoryRoutingUnavailableError().message;
+        context.log.warn(
+          {
+            ...logContext,
+            installationId,
+            repositoryId,
+            error: intentReviewFailure,
+          },
+          "Review routing failed; review skipped",
+        );
+      }
+    }
+
+    const selectedExpert = routingPlan?.selectedExpert;
+    const reviewLogContext = {
+      ...logContext,
+      installationId,
+      repositoryId,
+      routingMode: routingPlan?.mode,
+      expertId: selectedExpert?.expertId ?? null,
+      routingSource: selectedExpert?.source,
+      confidence: selectedExpert?.confidence,
+      triggeringLabels:
+        selectedExpert?.triggeringLabels.map((label) => ({
+          labelId: label.labelId,
+          name: label.name,
+          confidence: label.confidence,
+          source: label.source,
+        })) ?? [],
+    };
+    if (routingPlan) {
+      context.log.info(reviewLogContext, "Review routing resolved");
+    }
+
+    if (selectedExpert) {
+      const reviewIntent = selectedExpert.expertId;
+      try {
+        let reviewExpert = reviewExpertOverride;
+        if (reviewExpertOverride === undefined) {
+          const selection = await resolveReviewExpert(
+            installationId,
+            reviewIntent,
+            (usage) =>
+              context.log.info(
+                {
+                  ...reviewLogContext,
+                  intention: reviewIntent,
+                  ...usage,
+                },
+                "Expert token usage measured",
+              ),
+          );
+          reviewExpert = selection?.expert ?? null;
+          if (selection) {
+            context.log.info(
+              { ...reviewLogContext, ...selection.metadata },
+              "Review configuration selected",
+            );
+          }
+        }
+        if (reviewExpert) {
           intentReview = await reviewExpert.review(llmContext, reviewIntent);
           context.log.info(
             {
-              ...logContext,
+              ...reviewLogContext,
               reviewIntent: intentReview.intent,
               reviewVerdict: intentReview.verdict,
               reviewFindings: intentReview.findings.length,
             },
-            "Pull request routed to specialized Gemini review expert",
+            "Pull request routed to specialized review expert",
           );
           if (intentReview.findings.length > 0) {
             try {
               await publishIntentReview(context, prData, intentReview);
               context.log.info(
                 {
-                  ...logContext,
+                  ...reviewLogContext,
                   reviewFindings: intentReview.findings.length,
                 },
                 "Inline intent review published",
@@ -283,32 +372,33 @@ export async function handlePullRequestEvent(
             } catch (publishError) {
               context.log.warn(
                 {
-                  ...logContext,
+                  ...reviewLogContext,
                   error:
                     publishError instanceof Error
                       ? publishError.message
                       : publishError,
                 },
-                "Failed to publish inline bug review",
+                "Failed to publish inline intent review",
               );
             }
           }
-        } catch (reviewError) {
-          intentReviewFailure = describeLlmFailure(reviewError);
-          context.log.warn(
-            {
-              ...logContext,
-              error:
-                reviewError instanceof Error
-                  ? reviewError.message
-                  : reviewError,
-            },
-            "Specialized intent review failed",
-          );
+        } else {
+          intentReviewFailure =
+            "Aucune configuration disponible pour cet expert. Configurez-le dans les paramètres de l’installation.";
         }
-      } else {
+      } catch (reviewError) {
         intentReviewFailure =
-          "GEMINI_REVIEW_API_KEY ou GEMINI_API_KEY n'est pas configurée pour l'expert de revue.";
+          reviewError instanceof ReviewConfigurationError
+            ? reviewError.message
+            : describeLlmFailure(reviewError);
+        context.log.warn(
+          {
+            ...reviewLogContext,
+            intention: reviewIntent,
+            error: intentReviewFailure,
+          },
+          "Specialized intent review failed",
+        );
       }
     }
 
