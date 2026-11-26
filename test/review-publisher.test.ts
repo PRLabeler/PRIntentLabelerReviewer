@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CodeReviewResult } from "../src/domain/code-review.js";
 import type { PullRequestData } from "../src/domain/pull-request-data.js";
 import { publishIntentReview } from "../src/github/review-publisher.js";
+import { BOT_COMMENT_MARKER } from "../src/utils/constants.js";
 
 const prData = {
   owner: "org",
@@ -29,6 +30,11 @@ const review: CodeReviewResult = {
 function createContext(existing: unknown[] = []) {
   return {
     octokit: {
+      issues: {
+        listComments: vi.fn().mockResolvedValue({ data: [] }),
+        createComment: vi.fn().mockResolvedValue({}),
+        updateComment: vi.fn().mockResolvedValue({}),
+      },
       pulls: {
         listReviewComments: vi.fn().mockResolvedValue({ data: existing }),
         createReview: vi.fn().mockResolvedValue({}),
@@ -43,6 +49,38 @@ afterEach(() => {
 });
 
 describe("publishIntentReview", () => {
+  it("publie le verdict positif dans la conversation de la PR", async () => {
+    process.env.APP_ID = "42";
+    const context = createContext();
+    context.octokit.issues.listComments.mockResolvedValue({
+      data: [
+        {
+          id: 1,
+          body: BOT_COMMENT_MARKER,
+          user: { type: "Bot" },
+          performed_via_github_app: { id: 42 },
+        },
+      ],
+    });
+    const approvedReview: CodeReviewResult = {
+      intent: "general",
+      verdict: "approved",
+      summary: "Aucun défaut.",
+      findings: [],
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await publishIntentReview(context as any, prData, approvedReview);
+
+    expect(context.octokit.issues.createComment).toHaveBeenCalledWith({
+      owner: "org",
+      repo: "repo",
+      issue_number: 4,
+      body: "<!-- llm-pr-positive-review -->\n✅ **Looks good to me!**\n\nNo issues were detected during the code review.",
+    });
+    expect(context.octokit.pulls.createReview).not.toHaveBeenCalled();
+  });
+
   it.each(["bug", "general"])(
     "publie la revue %s avec un commentaire inline",
     async (intent) => {
@@ -66,6 +104,7 @@ describe("publishIntentReview", () => {
           ],
         }),
       );
+      expect(context.octokit.issues.createComment).not.toHaveBeenCalled();
     },
   );
 

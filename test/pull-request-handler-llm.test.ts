@@ -296,6 +296,29 @@ describe("handlePullRequestEvent — chemin LLM", () => {
         body: expect.stringContaining("Verdict : correction validée"),
       }),
     );
+    expect(ctx.octokit.issues.createComment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.stringContaining("Looks good to me!"),
+      }),
+    );
+  });
+
+  it("publie uniquement le bilan d'échec si l'expert de revue échoue", async () => {
+    const ctx = createMockContext();
+    const expert: ReviewExpert = {
+      review: vi.fn().mockRejectedValue(new Error("Revue interrompue")),
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await handlePullRequestEvent(ctx as any, mockProvider(), expert);
+
+    expect(expert.review).toHaveBeenCalledOnce();
+    expect(ctx.octokit.issues.createComment).toHaveBeenCalledOnce();
+    expect(ctx.octokit.issues.createComment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.stringContaining("La revue de code n'a pas abouti"),
+      }),
+    );
   });
 
   it.each([
@@ -584,7 +607,12 @@ describe("handlePullRequestEvent — chemin LLM", () => {
     expect(expert.review).not.toHaveBeenCalled();
     expect(resolveExpertConfiguration).not.toHaveBeenCalled();
     expect(ctx.octokit.pulls.createReview).not.toHaveBeenCalled();
-    expect(ctx.octokit.issues.createComment).toHaveBeenCalled();
+    expect(ctx.octokit.issues.createComment).toHaveBeenCalledOnce();
+    expect(ctx.octokit.issues.createComment).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.stringContaining("Looks good to me!"),
+      }),
+    );
     expect(ctx.log.warn).not.toHaveBeenCalled();
     expect(ctx.log.info).toHaveBeenCalledWith(
       expect.objectContaining({ routingMode: "configured", expertId: null }),

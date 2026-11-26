@@ -359,28 +359,26 @@ export async function handlePullRequestEvent(
             },
             "Pull request routed to specialized review expert",
           );
-          if (intentReview.findings.length > 0) {
-            try {
-              await publishIntentReview(context, prData, intentReview);
-              context.log.info(
-                {
-                  ...reviewLogContext,
-                  reviewFindings: intentReview.findings.length,
-                },
-                "Inline intent review published",
-              );
-            } catch (publishError) {
-              context.log.warn(
-                {
-                  ...reviewLogContext,
-                  error:
-                    publishError instanceof Error
-                      ? publishError.message
-                      : publishError,
-                },
-                "Failed to publish inline intent review",
-              );
-            }
+          try {
+            await publishIntentReview(context, prData, intentReview);
+            context.log.info(
+              {
+                ...reviewLogContext,
+                reviewFindings: intentReview.findings.length,
+              },
+              "Intent review publication completed",
+            );
+          } catch (publishError) {
+            context.log.warn(
+              {
+                ...reviewLogContext,
+                error:
+                  publishError instanceof Error
+                    ? publishError.message
+                    : publishError,
+              },
+              "Failed to publish intent review",
+            );
           }
         } else {
           intentReviewFailure =
