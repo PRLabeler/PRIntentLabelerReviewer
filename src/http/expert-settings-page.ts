@@ -1,6 +1,10 @@
 import type { WebSession } from "../auth/web-auth.js";
 import type { ExpertConfigurationSummary } from "../configuration/expert-configuration.js";
 import {
+  buildDefaultExpertPrompt,
+  type ExpertPromptSummary,
+} from "../configuration/expert-prompts.js";
+import {
   EXPERT_DEFINITIONS,
   type ExpertIntention,
 } from "../configuration/expert-definitions.js";
@@ -26,6 +30,7 @@ export function renderExpertSettingsPage(options: {
   intention: ExpertIntention;
   session: WebSession;
   configuration: ExpertConfigurationSummary | null;
+  prompt?: ExpertPromptSummary;
   notice?: string;
   error?: string;
 }): string {
@@ -33,6 +38,39 @@ export function renderExpertSettingsPage(options: {
   const definition = EXPERT_DEFINITIONS[intention];
   const expertName = escapeHtml(definition.displayName);
   const path = `/settings/${installationId}/experts/${intention}`;
+  const prompt = options.prompt ?? {
+    installationId,
+    intention,
+    systemPrompt: buildDefaultExpertPrompt(intention),
+    isCustom: false,
+  };
+  const promptStatus = prompt.isCustom
+    ? `<p class="muted">Prompt personnalisé${prompt.updatedAt ? ` — dernière modification : ${escapeHtml(prompt.updatedAt.toLocaleString("fr-CA"))}` : ""}</p>`
+    : `<p class="muted">Prompt par défaut</p>`;
+  const promptSection = `<section class="card" id="expert-prompt">
+    <h2>Prompt de l’expert ${expertName}</h2>
+    <p>Texte des instructions système envoyées au LLM lors de la revue par l’expert ${expertName}.</p>
+    ${promptStatus}
+    <form method="post" action="${path}/prompt/save">
+      <input type="hidden" name="_csrf" value="${escapeHtml(session.csrfToken)}">
+      <label for="systemPrompt">Prompt système</label>
+      <textarea id="systemPrompt" name="systemPrompt" rows="16" required>${escapeHtml(prompt.systemPrompt)}</textarea>
+      <small>Conservez la structure JSON attendue (<code>summary</code> et <code>findings</code>) afin que les commentaires de revue soient correctement publiés.</small>
+      <div class="actions">
+        <button type="submit">Enregistrer le prompt</button>
+      </div>
+    </form>
+    ${
+      prompt.isCustom
+        ? `<form method="post" action="${path}/prompt/reset">
+      <input type="hidden" name="_csrf" value="${escapeHtml(session.csrfToken)}">
+      <div class="actions">
+        <button class="secondary" type="submit">Réinitialiser le prompt par défaut</button>
+      </div>
+    </form>`
+        : ""
+    }
+  </section>`;
   return renderPage(
     `Expert ${definition.displayName}`,
     `<section class="card">
@@ -69,6 +107,7 @@ export function renderExpertSettingsPage(options: {
   </section>`
       : `<section class="card"><p>Aucune configuration enregistrée pour l’expert ${expertName} de cette installation. Le repli Gemini du serveur sera utilisé s’il est configuré ; sinon, la revue spécialisée sera ignorée et signalée dans le commentaire d’analyse.</p></section>`
   }
+  ${promptSection}
   <script src="/assets/settings.js" defer></script>`,
   );
 }

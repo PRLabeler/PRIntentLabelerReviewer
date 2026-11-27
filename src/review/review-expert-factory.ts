@@ -8,9 +8,11 @@ import type { ReviewExpert } from "./review-expert.js";
 export function createReviewExpert(
   configuration: ResolvedExpertConfiguration,
   onUsage?: (metrics: LlmUsageMetrics) => void,
+  customSystemPrompt?: string,
 ): ReviewExpert {
   assertExpertProvider(configuration.intention, configuration.provider);
   return new ConfigurableReviewExpert(
     createTextGenerator(configuration, onUsage),
+    customSystemPrompt,
   );
 }

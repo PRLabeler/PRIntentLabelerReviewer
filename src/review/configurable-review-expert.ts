@@ -14,7 +14,10 @@ import { REVIEW_SCHEMA, validateReviewResponse } from "./review-response.js";
 import { parseReviewResult } from "./review-parser.js";
 
 export class ConfigurableReviewExpert implements ReviewExpert {
-  constructor(private readonly generator: TextGenerator) {}
+  constructor(
+    private readonly generator: TextGenerator,
+    private readonly customSystemPrompt?: string,
+  ) {}
 
   async review(
     context: PullRequestLlmContext,
@@ -26,7 +29,8 @@ export class ConfigurableReviewExpert implements ReviewExpert {
         "aucune politique de revue enregistrée",
       );
     }
-    const system = buildReviewSystemPrompt(policy);
+    const system =
+      this.customSystemPrompt?.trim() || buildReviewSystemPrompt(policy);
     const prompt = buildReviewPrompt(context, policy);
     // Inclure le schéma et une marge de protocole, sans modifier le contexte
     // sélectionné pour le classifieur ni tronquer silencieusement le diff.

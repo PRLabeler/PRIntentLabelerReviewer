@@ -30,6 +30,7 @@ describe("migrations (aucune connexion PostgreSQL réelle)", () => {
       "001_llm_configuration.sql",
       "002_expert_llm_configuration.sql",
       "003_repository_review_policies.sql",
+      "004_expert_prompt_configurations.sql",
     ]);
     expect(client.query.mock.calls).toEqual([
       ["BEGIN"],
@@ -40,6 +41,9 @@ describe("migrations (aucune connexion PostgreSQL réelle)", () => {
       ["COMMIT"],
       ["BEGIN"],
       [sql[2]],
+      ["COMMIT"],
+      ["BEGIN"],
+      [sql[3]],
       ["COMMIT"],
     ]);
     expect(client.release).toHaveBeenCalledOnce();

@@ -1,4 +1,5 @@
 import { getExpertConfigurationService } from "../configuration/expert-configuration-runtime.js";
+import { getExpertPromptStore } from "../configuration/expert-prompts.js";
 import {
   assertExpertIntention,
   type ExpertIntention,
@@ -66,6 +67,9 @@ export async function resolveReviewExpert(
       installationId,
       intention,
     );
+    const customSystemPrompt =
+      (await getExpertPromptStore()?.resolve(installationId, intention)) ??
+      undefined;
 
     if (configuration) {
       if (
@@ -75,7 +79,10 @@ export async function resolveReviewExpert(
         throw new ReviewConfigurationError();
       }
       return {
-        expert: createReviewExpert(configuration, onUsage),
+        expert:
+          customSystemPrompt !== undefined
+            ? createReviewExpert(configuration, onUsage, customSystemPrompt)
+            : createReviewExpert(configuration, onUsage),
         metadata: {
           installationId,
           intention,
@@ -90,9 +97,21 @@ export async function resolveReviewExpert(
     if (!credentials) return null;
 
     return {
-      expert: new ConfigurableReviewExpert(
-        createTextGenerator({ provider: "gemini", ...credentials }, onUsage),
-      ),
+      expert:
+        customSystemPrompt !== undefined
+          ? new ConfigurableReviewExpert(
+              createTextGenerator(
+                { provider: "gemini", ...credentials },
+                onUsage,
+              ),
+              customSystemPrompt,
+            )
+          : new ConfigurableReviewExpert(
+              createTextGenerator(
+                { provider: "gemini", ...credentials },
+                onUsage,
+              ),
+            ),
       metadata: {
         installationId,
         intention,

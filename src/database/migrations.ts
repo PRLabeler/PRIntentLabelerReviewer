@@ -6,6 +6,7 @@ export const DATABASE_MIGRATIONS = [
   "001_llm_configuration.sql",
   "002_expert_llm_configuration.sql",
   "003_repository_review_policies.sql",
+  "004_expert_prompt_configurations.sql",
 ] as const;
 
 export async function applyDatabaseMigrations(

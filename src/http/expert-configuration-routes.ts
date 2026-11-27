@@ -3,6 +3,10 @@ import type { WebSession } from "../auth/web-auth.js";
 import { getGitHubOAuthService } from "../auth/runtime.js";
 import { getExpertConfigurationService } from "../configuration/expert-configuration-runtime.js";
 import {
+  EXPERT_PROMPT_TOO_LONG_ERROR,
+  getExpertPromptStore,
+} from "../configuration/expert-prompts.js";
+import {
   ExpertConfigurationUnavailableError,
   type TestExpertConfigurationInput,
 } from "../configuration/expert-configuration.js";
@@ -118,6 +122,8 @@ const PUBLIC_MESSAGES = new Set([
   "Une URL personnalisée n’est pas autorisée pour cet expert.",
   "La clé API est requise.",
   "Une nouvelle clé API est requise lors du changement de fournisseur.",
+  "Le prompt de l’expert est requis.",
+  EXPERT_PROMPT_TOO_LONG_ERROR,
 ]);
 
 function publicMessage(error: unknown, intention: ExpertIntention): string {
@@ -138,20 +144,31 @@ export function registerExpertConfigurationRoutes(router: Router): void {
     if (!scope) return;
     const expertName = EXPERT_DEFINITIONS[scope.intention].displayName;
     try {
-      const configuration = await getExpertConfigurationService().getSummary(
-        scope.installationId,
-        scope.intention,
-      );
+      const [configuration, prompt] = await Promise.all([
+        getExpertConfigurationService().getSummary(
+          scope.installationId,
+          scope.intention,
+        ),
+        getExpertPromptStore()?.getSummary(
+          scope.installationId,
+          scope.intention,
+        ),
+      ]);
       let notice: string | undefined;
       if (req.query.saved === "1") {
         notice = `Configuration de l’expert ${expertName} testée et enregistrée. Elle sera utilisée à la prochaine analyse d’une PR pour laquelle cet expert est sélectionné.`;
       } else if (req.query.deleted === "1") {
         notice = `La configuration de l’expert ${expertName} a été supprimée pour cette installation.`;
+      } else if (req.query.promptSaved === "1") {
+        notice = `Le prompt de l’expert ${expertName} a été enregistré.`;
+      } else if (req.query.promptReset === "1") {
+        notice = `Le prompt de l’expert ${expertName} a été réinitialisé par défaut.`;
       }
       res.send(
         renderExpertSettingsPage({
           ...scope,
           configuration,
+          prompt,
           notice,
         }),
       );
@@ -212,14 +229,21 @@ export function registerExpertConfigurationRoutes(router: Router): void {
         return;
       }
       try {
-        const configuration = await getExpertConfigurationService().getSummary(
-          scope.installationId,
-          scope.intention,
-        );
+        const [configuration, prompt] = await Promise.all([
+          getExpertConfigurationService().getSummary(
+            scope.installationId,
+            scope.intention,
+          ),
+          getExpertPromptStore()?.getSummary(
+            scope.installationId,
+            scope.intention,
+          ),
+        ]);
         res.status(400).send(
           renderExpertSettingsPage({
             ...scope,
             configuration,
+            prompt,
             error: publicMessage(error, scope.intention),
           }),
         );
@@ -252,6 +276,91 @@ export function registerExpertConfigurationRoutes(router: Router): void {
         res,
         503,
         `Impossible de supprimer la configuration de l’expert ${expertName}.`,
+        false,
+      );
+    }
+  });
+
+  router.post(`${path}/prompt/save`, async (req, res) => {
+    const scope = await authorize(req, res);
+    if (!scope) return;
+    const expertName = EXPERT_DEFINITIONS[scope.intention].displayName;
+    const promptStore = getExpertPromptStore();
+    if (!promptStore) {
+      sendErrorResponse(
+        res,
+        503,
+        "La persistance des prompts n’est pas activée.",
+        false,
+      );
+      return;
+    }
+    try {
+      await promptStore.save({
+        installationId: scope.installationId,
+        intention: scope.intention,
+        systemPrompt: req.body?.systemPrompt,
+        githubUserId: scope.session.githubUserId,
+      });
+      res.redirect(
+        `/settings/${scope.installationId}/experts/${scope.intention}?promptSaved=1#expert-prompt`,
+      );
+    } catch (error) {
+      try {
+        const [configuration, existingPrompt] = await Promise.all([
+          getExpertConfigurationService().getSummary(
+            scope.installationId,
+            scope.intention,
+          ),
+          promptStore.getSummary(scope.installationId, scope.intention),
+        ]);
+        const submittedPrompt =
+          typeof req.body?.systemPrompt === "string"
+            ? req.body.systemPrompt
+            : existingPrompt.systemPrompt;
+        res.status(400).send(
+          renderExpertSettingsPage({
+            ...scope,
+            configuration,
+            prompt: { ...existingPrompt, systemPrompt: submittedPrompt },
+            error: publicMessage(error, scope.intention),
+          }),
+        );
+      } catch {
+        sendErrorResponse(
+          res,
+          503,
+          `Impossible d’enregistrer le prompt de l’expert ${expertName}.`,
+          false,
+        );
+      }
+    }
+  });
+
+  router.post(`${path}/prompt/reset`, async (req, res) => {
+    const scope = await authorize(req, res);
+    if (!scope) return;
+    const expertName = EXPERT_DEFINITIONS[scope.intention].displayName;
+    const promptStore = getExpertPromptStore();
+    if (!promptStore) {
+      sendErrorResponse(
+        res,
+        503,
+        "La persistance des prompts n’est pas activée.",
+        false,
+      );
+      return;
+    }
+    try {
+      await promptStore.reset(scope.installationId, scope.intention);
+      res.redirect(
+        `/settings/${scope.installationId}/experts/${scope.intention}?promptReset=1#expert-prompt`,
+      );
+    } catch {
+      sendErrorResponse(
+        res,
+        503,
+        `Impossible de réinitialiser le prompt de l’expert ${expertName}.`,
         false,
       );
     }

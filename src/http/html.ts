@@ -35,7 +35,7 @@ export function renderPage(title: string, body: string): string {
     h2 { font-size: 1.1rem; margin-top: 0; }
     p { color: #b1bac4; }
     label { display: block; font-weight: 600; margin: 18px 0 6px; }
-    input, select {
+    input, select, textarea {
       box-sizing: border-box;
       width: 100%;
       padding: 10px 12px;
@@ -44,6 +44,13 @@ export function renderPage(title: string, body: string): string {
       background: #0d1117;
       color: #e6edf3;
       font: inherit;
+    }
+    textarea {
+      min-height: 260px;
+      resize: vertical;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.9rem;
+      line-height: 1.45;
     }
     small { display: block; color: #8c959f; margin-top: 5px; }
     .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 24px; }
