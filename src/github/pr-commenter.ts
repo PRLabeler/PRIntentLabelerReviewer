@@ -28,6 +28,7 @@ export async function findBotComment(
   owner: string,
   repo: string,
   issueNumber: number,
+  marker = BOT_COMMENT_MARKER,
 ): Promise<BotComment | null> {
   const comments = await listAllPages(octokit, octokit.issues.listComments, {
     owner,
@@ -38,8 +39,7 @@ export async function findBotComment(
 
   const existing = comments.find(
     (comment) =>
-      comment.body?.startsWith(BOT_COMMENT_MARKER) &&
-      isCommentOwnedByApp(comment),
+      comment.body?.startsWith(marker) && isCommentOwnedByApp(comment),
   );
 
   return existing ? { id: existing.id, body: existing.body ?? "" } : null;
@@ -52,8 +52,16 @@ export async function upsertComment(
   repo: string,
   issueNumber: number,
   body: string,
+  marker = BOT_COMMENT_MARKER,
 ): Promise<void> {
-  const existing = await findBotComment(octokit, owner, repo, issueNumber);
+  const existing = await findBotComment(
+    octokit,
+    owner,
+    repo,
+    issueNumber,
+    marker,
+  );
+  if (existing?.body === body) return;
 
   if (existing) {
     await octokit.issues.updateComment({

@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { upsertPullRequestComment } from "../src/github/pr-commenter.js";
+import {
+  upsertComment,
+  upsertPullRequestComment,
+} from "../src/github/pr-commenter.js";
 import { BOT_COMMENT_MARKER } from "../src/utils/constants.js";
 
 type MockComment = {
@@ -42,7 +45,7 @@ function createMockContext(existingComments: MockComment[] = []) {
   };
 }
 
-describe("upsertPullRequestComment", () => {
+describe("gestion des commentaires de PR", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.APP_ID = "77";
@@ -134,6 +137,23 @@ describe("upsertPullRequestComment", () => {
     await upsertPullRequestComment(ctx as any, 42, "new body");
 
     expect(ctx.octokit.issues.createComment).toHaveBeenCalled();
+    expect(ctx.octokit.issues.updateComment).not.toHaveBeenCalled();
+  });
+
+  it("réutilise le commentaire de revue lors d'une deuxième publication sur la PR", async () => {
+    const marker = "<!-- llm-pr-positive-review -->";
+    const body = `${marker}\nCommentaire de revue`;
+    const comments = [appComment(1, `${BOT_COMMENT_MARKER}\nBilan des labels`)];
+    const ctx = createMockContext(comments);
+    const octokit = ctx.octokit as unknown as Parameters<
+      typeof upsertComment
+    >[0];
+
+    await upsertComment(octokit, "org", "repo", 42, body, marker);
+    comments.push(appComment(2, body));
+    await upsertComment(octokit, "org", "repo", 42, body, marker);
+
+    expect(ctx.octokit.issues.createComment).toHaveBeenCalledOnce();
     expect(ctx.octokit.issues.updateComment).not.toHaveBeenCalled();
   });
 });

@@ -2,9 +2,14 @@ import type { Context } from "probot";
 import type { CodeReviewResult } from "../domain/code-review.js";
 import type { PullRequestData } from "../domain/pull-request-data.js";
 import { listAllPages } from "./pagination.js";
-import { isCommentOwnedByApp } from "./pr-commenter.js";
+import { isCommentOwnedByApp, upsertComment } from "./pr-commenter.js";
 
 const REVIEW_MARKER_PREFIX = "<!-- llm-pr-intent-review";
+const POSITIVE_REVIEW_MARKER = "<!-- llm-pr-positive-review -->";
+const POSITIVE_REVIEW_COMMENT = `${POSITIVE_REVIEW_MARKER}
+✅ **Looks good to me!**
+
+No issues were detected during the code review.`;
 
 type ReviewCommentIdentity = {
   body?: string | null;
@@ -21,7 +26,19 @@ export async function publishIntentReview(
   prData: PullRequestData,
   review: CodeReviewResult,
 ): Promise<void> {
-  if (review.findings.length === 0) return;
+  if (review.findings.length === 0) {
+    if (review.verdict === "approved") {
+      await upsertComment(
+        context.octokit,
+        prData.owner,
+        prData.repo,
+        prData.number,
+        POSITIVE_REVIEW_COMMENT,
+        POSITIVE_REVIEW_MARKER,
+      );
+    }
+    return;
+  }
 
   const marker = `${REVIEW_MARKER_PREFIX} intent=${review.intent} sha=${prData.headSha} -->`;
   const existing = await listAllPages<
